@@ -1,0 +1,152 @@
+name: Validate Dialect
+
+# Every check here reads the dialect definitions and proves they hold
+# together; none of them writes to the repository, publishes an artifact,
+# or exercises dialect behavior. Generated bindings exist only inside the
+# runner and are discarded with it.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  schema:
+    name: Schema validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up MAVLink generation tooling
+        uses: ./.github/actions/setup-mavlink-tooling
+
+      - name: Install xmllint
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libxml2-utils
+
+      - name: Validate the dialect files against the MAVLink schema
+        # military_extensions.xml is a template, excluded from generation
+        # by design, so this is the one gate that keeps it well-formed.
+        run: |
+          xmllint --noout --schema pymavlink/generator/mavschema.xsd \
+            military.xml military_extensions.xml
+
+  policy:
+    name: ID allocation and naming policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check the 53xxx allocation and MAVLink naming conventions
+        run: python3 .github/scripts/check_dialect_policy.py
+
+  wire-compat:
+    name: Wire-compatibility report
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out this repository (full history for the base)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up MAVLink generation tooling
+        uses: ./.github/actions/setup-mavlink-tooling
+
+      - name: Compare wire identity against the PR base
+        # Advisory: it reports in the step summary and never fails the
+        # check, because the dialect is under development and replacing a
+        # message body is a decision for review, not for a bot. Flip to
+        # WIRE_COMPAT_ENFORCE=1 once message IDs freeze.
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git show "${BASE_SHA}:military.xml" > "${RUNNER_TEMP}/base_military.xml"
+          python3 .github/scripts/check_wire_compat.py \
+            "${RUNNER_TEMP}/base_military.xml" military.xml
+
+  generate-c:
+    name: Generate and compile C
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up MAVLink generation tooling
+        uses: ./.github/actions/setup-mavlink-tooling
+
+      - name: Generate C bindings (validated, strict units)
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          python3 -m pymavlink.tools.mavgen \
+            --lang=C --wire-protocol=2.0 --strict-units \
+            --output=build/c \
+            mavlink/message_definitions/v1.0/military.xml
+
+      - name: Type-check the generated headers at -Wall -Wextra -Werror
+        # This repository carries definitions only, so no consumer or
+        # example code is committed and none is written here: the compiler
+        # parses the generated dialect header as an include and type-checks
+        # its inline helpers, without constructing or moving any message.
+        # -Wno-address-of-packed-member: mavgen's generated helpers take
+        # addresses of packed-struct members by design; it fires inside
+        # the generated common.xml headers, independent of this dialect.
+        run: |
+          echo '#include <military/mavlink.h>' | \
+            gcc -std=c11 -Wall -Wextra -Werror -Wno-address-of-packed-member \
+              -fsyntax-only -I build/c -x c -
+          echo "generated C headers parse and type-check cleanly"
+
+  generate-python:
+    name: Generate and import Python
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up MAVLink generation tooling
+        uses: ./.github/actions/setup-mavlink-tooling
+
+      - name: Generate Python bindings (validated, strict units)
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          mkdir -p build/python
+          python3 -m pymavlink.tools.mavgen \
+            --lang=Python --wire-protocol=2.0 --strict-units \
+            --output=build/python/military.py \
+            mavlink/message_definitions/v1.0/military.xml
+
+      - name: Import the generated module
+        # Import proves the generated module initializes and its message
+        # map is complete; nothing is constructed and nothing is sent.
+        working-directory: build/python
+        run: |
+          python3 -c "import military; n = len(military.mavlink_map); assert n >= 26, n; print(n, 'messages in the generated map')"
