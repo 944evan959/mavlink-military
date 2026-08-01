@@ -1,0 +1,29 @@
+# Keeps the SHA-pinned actions current. One grouped PR a month is the
+# right noise floor for a definitions repository; the mavlink/pymavlink
+# generator pins live in .github/actions/setup-mavlink-tooling/action.yml
+# as checkout refs and move by hand, together, behind a green validation
+# run.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  # Composite actions are scanned per-directory, not via the workflows.
+  - package-ecosystem: "github-actions"
+    directory: "/.github/actions/setup-mavlink-tooling"
+    schedule:
+      interval: "monthly"
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns:
+          - "*"
