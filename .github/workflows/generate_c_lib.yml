@@ -1,64 +1,63 @@
 name: Generate MAVLink C Headers
 
+# The one writing workflow in this repository: it keeps the pre-generated
+# headers under generated/ in step with military.xml after a change lands
+# on main. Everything PR-side lives in validate_dialect.yml and only reads.
+
 on:
   push:
     branches: [main]
     paths:
       - "military.xml"
       - ".github/workflows/generate_c_lib.yml"
+      - ".github/actions/setup-mavlink-tooling/**"
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One regeneration at a time and never cancelled mid-flight: a run killed
+# between commit and push would just be rerun, but overlapping runs could
+# race each other's rebase.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
 
 jobs:
   generate:
+    name: Regenerate committed C headers
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
 
     steps:
-      - name: Checkout this repository
-        uses: actions/checkout@v4
+      - name: Check out this repository
+        # Credentials stay in place on this checkout alone: the final
+        # step pushes the regenerated headers back to main with the
+        # job-scoped token.
+        # zizmor: ignore[artipacked]
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.x"
-
-      - name: Checkout mavlink repository (dialect definitions)
-        uses: actions/checkout@v4
-        with:
-          repository: mavlink/mavlink
-          path: mavlink
-          depth: 1
-
-      - name: Checkout pymavlink repository (code generator)
-        uses: actions/checkout@v4
-        with:
-          repository: ArduPilot/pymavlink
-          path: pymavlink
-          depth: 1
-
-      - name: Install pymavlink dependencies
-        run: |
-          pip install future lxml
-
-      - name: Place dialect definition alongside other message definitions
-        run: |
-          cp military.xml mavlink/message_definitions/v1.0/
+      - name: Set up MAVLink generation tooling
+        uses: ./.github/actions/setup-mavlink-tooling
 
       - name: Generate C headers
+        # Validation stays on: the pinned definitions and generator are a
+        # pair proven against each other, so a validation failure here is
+        # a real dialect defect, not upstream drift. The output tree is
+        # cleared first so a message removed from the dialect cannot leave
+        # a stale header behind.
+        env:
+          PYTHONPATH: ${{ github.workspace }}
         run: |
-          # --no-validate: common.xml on mavlink master currently fails the
-          # pymavlink master schema (superseded tag placement), which makes
-          # mavgen exit before generating. The dialect files themselves are
-          # schema-checked before merge.
-          python pymavlink/tools/mavgen.py \
-            --lang=C \
-            --wire-protocol=2.0 \
-            --no-validate \
+          rm -rf generated/include/mavlink/v2.0
+          python3 -m pymavlink.tools.mavgen \
+            --lang=C --wire-protocol=2.0 --strict-units \
             --output=generated/include/mavlink/v2.0 \
             mavlink/message_definitions/v1.0/military.xml
 
-      - name: Commit and push generated headers
+      - name: Commit and push regenerated headers
         run: |
           git config user.name  "auterion-ci"
           git config user.email "ci@auterion.com"
