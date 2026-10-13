@@ -23,9 +23,9 @@ hero:
       link: https://github.com/Dronecode/mavlink-military
 
 features:
-  - title: Safety and arming
-    details: One arming language for every munition and ESAD. Arming, ignition and fault state, challenge-response arming, and store readiness before release.
-    link: /en/about/messages.md#safety-and-arming
+  - title: Payload, arming and stores
+    details: One arming language for every fitted payload. Lifecycle and condition state, challenge-response arming, and carrier store readiness and release consent before release.
+    link: /en/about/messages.md#payload-arming-and-stores
     linkText: See the messages
   - title: Targeting and engagement
     details: Targets, fire missions, handover and damage assessment that every vendor reads the same way, with abort and check-fire as first-class actions.

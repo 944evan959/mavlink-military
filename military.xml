@@ -71,13 +71,19 @@
       53024 CALL_FOR_FIRE         full call-for-fire method elements (VMF K02.4)
 
     ESAD & stores (53030-53039)
-      53030 ESAD_STATE            safe/arm telemetry incl. pin/delay/trigger status
-      53031 ESAD_ARMING           authenticated arm/disarm command
-      53032 ESAD_CONFIG           authenticated coarse safe/arm mode config
-      53033 STORE_STATUS          per-store go/no-go release roll-up
-      53034 STORE_SENSOR_STATUS   per-sensor health for a store's decel system
-      53035 STORE_MUNITION        descriptive munition inventory/status (no fuze config)
+      53030 PAYLOAD_STATE           payload telemetry: class, lifecycle,
+                                    condition flags, state-bound aux datum
+      53031 PAYLOAD_CONTROL         authenticated state/mode command (arm,
+                                    disarm, activate, deactivate)
+      53032 PAYLOAD_CONFIG          authenticated coarse settings update
+      53033 STORE_STATUS            per-store go/no-go roll-up + carrier
+                                    release consent
+      53034 STORE_SENSOR_STATUS     carrier-side per-sensor health/readings
+      53035 STORE_MUNITION          descriptive munition inventory/status (no fuze config)
       53036 LOITER_MUNITION_CONTROL  loitering-munition control + consent handshake
+      53037 PAYLOAD_SETTINGS        carrier-assigned settings (read-only)
+      53038 PAYLOAD_GET_SETTINGS    request for PAYLOAD_SETTINGS
+      53039 PAYLOAD_SENSOR_STATUS   payload-side per-sensor health/readings
 
     Remote weapon station (53040-53049)
       53040 RWS_POSE              weapon-station pose relative to host
@@ -133,9 +139,10 @@
       an enum where the field is a category that could gain a third value and
       benefits from an explicit UNSPECIFIED state.
     - Two enums keep 0 as an action, MAVLINK_M_ENGAGEMENT_DIRECTIVE_ABORT and
-      MAVLINK_M_ESAD_REQUEST_DISARM, so a zero-filled ENGAGEMENT_DIRECTIVE or
-      ESAD_ARMING is a valid stop sent to every system. Both fail toward safe;
-      a sender never transmits an unset message.
+      MAVLINK_M_PAYLOAD_STATE_CHANGE_REQUEST_NONE, so a zero-filled
+      ENGAGEMENT_DIRECTIVE or PAYLOAD_CONTROL is a valid stop or no-op sent to
+      every system. Both fail toward safe; a sender never transmits an unset
+      message.
 
   COORDINATE DATUM
     All altitudes are MSL (mean sea level). Joint networks often pass targeting
@@ -147,14 +154,15 @@
     - The dialect is transport-agnostic and describes uplink intent/status, not
       component-bus mechanics. It is the GCS / edge / joint-facing language, and
       is used directly over native MAVLink transports (UART/serial, UDP).
-    - Where a device (e.g. an ESAD) sits on a DroneCAN bus, an FMU or bridge node
-      translates between the DroneCAN component messages and these MAVLink-M
-      messages. MAVLink-M is the stable abstraction; component-bus definitions
-      map onto it. Enum semantics and value assignments must be kept aligned
-      across the two definitions by the implementer.
+    - Where a device (e.g. an ESAD-class payload) sits on a DroneCAN bus, an FMU
+      or bridge node translates between the DroneCAN component messages and
+      these MAVLink-M messages. MAVLink-M is the stable abstraction;
+      component-bus definitions map onto it. Enum semantics and value
+      assignments must be kept aligned across the two definitions by the
+      implementer.
     - Authentication is per-bus. On the MAVLink leg it comes from message
-      signing, which SAFETY BOUNDARIES requires; the arming_challenge_hash
-      only ties a command to the state the ESAD advertised, and every
+      signing, which SAFETY BOUNDARIES requires; the payload_challenge_hash
+      only ties a command to the state the payload advertised, and every
       listener sees it. The FMU/bridge is the trust-translation point into
       the component-bus domain.
 
@@ -287,11 +295,12 @@
       MAVLINK_M_ENGAGEMENT_DIRECTIVE_RETARGET; a SPLASH_CORRECTION with
       MAVLINK_M_FMC_FIRE_FOR_EFFECT, MAVLINK_M_FMC_REPEAT or
       MAVLINK_M_FMC_CANCEL_CHECK_FIRING; MAVLINK_M_CAS_CONTINUE and
-      MAVLINK_M_CAS_CLEARED_HOT; a LOITER_MUNITION_CONTROL that tasks a
-      munition or carries MAVLINK_M_LM_CONSENT_GRANTED; and
-      MAVLINK_M_ESAD_REQUEST_ARM. A receiver records the time on its own
-      clock at which each stop arrives, against every engagement or ESAD
-      the stop selects or names, whoever issued it, including one it does
+       MAVLINK_M_CAS_CLEARED_HOT; a LOITER_MUNITION_CONTROL that tasks a
+       munition or carries MAVLINK_M_LM_CONSENT_GRANTED; and a
+       PAYLOAD_CONTROL with MAVLINK_M_PAYLOAD_STATE_CHANGE_REQUEST_ARM. A
+       receiver records the time on its own clock at which each stop
+       arrives, against every engagement or payload the stop selects or
+       names, whoever issued it, including one it does
       not hold yet, whose start may still be on its way; a stop that
       selects every engagement (sequence 0xFFFF, or a
       LOITER_MUNITION_CONTROL sent with target_system 0) is recorded as
@@ -326,10 +335,11 @@
       Token anti-spoofing is a C2 / gateway / secure-enclave responsibility.
     - LOITER_MUNITION_CONTROL requires a human-in-the-loop consent handshake; the
       consent state is a hard gate, not advisory.
-    - ESAD_CONFIG and the selectable WARHEAD_MODE set only coarse, device-defined
-      SAFE/ARM modes. They MUST NOT be widened to carry a continuous distance, a
-      fuze timing / inter-stage delay, or height-of-burst configuration; that is
-      device-internal and belongs on the component bus, not this dialect.
+    - PAYLOAD_CONTROL(state_change = MODE) and the selectable WARHEAD_MODE
+      set only coarse, device-defined SAFE/ARM modes. They MUST NOT be
+      widened to carry a continuous distance, a fuze timing / inter-stage delay,
+      or height-of-burst configuration; that is device-internal and belongs on
+      the component bus, not this dialect.
     - ATR confidence is carried as a raw score plus a model id; the coarse tier is
       advisory display only and MUST NOT be an automated rules-of-engagement input.
 
@@ -563,82 +573,165 @@
       <entry value="2" name="MAVLINK_M_DELIVERY_BOT"><description>Bomb on target.</description></entry>
     </enum>
 
-    <enum name="MAVLINK_M_ESAD_ARMING_STATUS">
-      <description>ESAD arming state.</description>
-      <entry value="0" name="MAVLINK_M_ESAD_ARMING_DISARMED">  <description>System is disarmed.</description></entry>
-      <entry value="1" name="MAVLINK_M_ESAD_ARMING_ARMED">     <description>System is armed.</description></entry>
-      <entry value="2" name="MAVLINK_M_ESAD_ARMING_FAULT">     <description>Arming fault detected.</description></entry>
-    </enum>
-
-    <enum name="MAVLINK_M_ESAD_MUNITION_STATUS">
-      <description>ESAD munition readiness state.</description>
-      <entry value="0" name="MAVLINK_M_ESAD_MUNITION_NOT_PRESENT"><description>No munition present.</description></entry>
-      <entry value="1" name="MAVLINK_M_ESAD_MUNITION_PRESENT">    <description>Munition present and not ready.</description></entry>
-      <entry value="2" name="MAVLINK_M_ESAD_MUNITION_READY">      <description>Munition present and ready.</description></entry>
-      <entry value="3" name="MAVLINK_M_ESAD_MUNITION_FAULT">      <description>Munition fault detected.</description></entry>
-    </enum>
-
-    <enum name="MAVLINK_M_ESAD_IGNITION_STATUS">
-      <description>ESAD ignition circuit state.</description>
-      <entry value="0" name="MAVLINK_M_ESAD_IGNITION_OPEN">    <description>Ignition circuit open.</description></entry>
-      <entry value="1" name="MAVLINK_M_ESAD_IGNITION_CLOSED">  <description>Ignition circuit closed.</description></entry>
-      <entry value="2" name="MAVLINK_M_ESAD_IGNITION_FIRED">   <description>Ignition has fired.</description></entry>
-      <entry value="3" name="MAVLINK_M_ESAD_IGNITION_FAULT">   <description>Ignition circuit fault.</description></entry>
-    </enum>
-
-    <enum name="MAVLINK_M_ESAD_FAULT_FLAGS" bitmask="true">
+    <enum name="MAVLINK_M_PAYLOAD_STATUS">
       <description>
-        ESAD fault flag bitmask. Scope is ESAD-internal faults only.
-        Deceleration/landing sensor health is reported separately via
-        STORE_SENSOR_STATUS and is not represented here.
+        Sequential lifecycle of a fitted payload, common to ESAD, gun, and
+        non-lethal classes. States are mutually exclusive and progress in
+        order. Replaces the previous ESAD arming / munition / ignition state
+        triad. Each state carries at most one auxiliary datum (payload_aux on
+        PAYLOAD_STATE); the aux meaning is defined by the state it is
+        reported with, so an observer never has to disambiguate a countdown
+        from an error code from an environmental reading.
       </description>
-      <entry value="1"  name="MAVLINK_M_ESAD_FAULT_WIRING">          <description>Wiring fault detected.</description></entry>
-      <entry value="2"  name="MAVLINK_M_ESAD_FAULT_POWER_GLITCH">    <description>Power supply glitch detected.</description></entry>
-      <entry value="4"  name="MAVLINK_M_ESAD_FAULT_SIGNAL_INTEGRITY"><description>Signal integrity fault detected.</description></entry>
+      <entry value="0" name="MAVLINK_M_PAYLOAD_NOT_PRESENT"><description>Payload not detected in the store. payload_aux: none (0).</description></entry>
+      <entry value="1" name="MAVLINK_M_PAYLOAD_IDLE"><description>Detected and locally safe — for an ESAD this is the safety pin present or trigger lock engaged (formerly PIN_PRESENT plus ARMING_DISARMED). payload_aux: none (0), or an environmental-condition code (implementation-defined) if the safe/lockout is environmental.</description></entry>
+      <entry value="2" name="MAVLINK_M_PAYLOAD_SST"><description>In the safe-separation lockout, counting down from a defined timer value. payload_aux: remaining seconds (string).</description></entry>
+      <entry value="3" name="MAVLINK_M_PAYLOAD_DISARMED"><description>Detected and cleared to arm on request. payload_aux: none (0).</description></entry>
+      <entry value="4" name="MAVLINK_M_PAYLOAD_ARMING"><description>Actively attempting to arm (handshake / self-test in flight). payload_aux: none (0).</description></entry>
+      <entry value="5" name="MAVLINK_M_PAYLOAD_ARMED"><description>Armed and ready for activation. payload_aux: none (0).</description></entry>
+      <entry value="6" name="MAVLINK_M_PAYLOAD_ACTIVATED"><description>Activation function has executed (gun: fired; ESAD: detonated; non-lethal: round cycled). payload_aux: none (0).</description></entry>
+      <entry value="7" name="MAVLINK_M_PAYLOAD_DISABLING"><description>Actively attempting to disable / render safe. payload_aux: none (0).</description></entry>
+      <entry value="8" name="MAVLINK_M_PAYLOAD_DISABLED"><description>Disabled; requires power cycle or service to function again. payload_aux: none (0).</description></entry>
+      <entry value="9" name="MAVLINK_M_PAYLOAD_ERROR"><description>Payload experienced an internal or subsystem error. payload_aux: error descriptor code (implementation-defined), or 0 if none.</description></entry>
     </enum>
 
-    <enum name="MAVLINK_M_ESAD_ARMING_REQUEST">
-      <description>ESAD arming command.</description>
-      <entry value="0" name="MAVLINK_M_ESAD_REQUEST_DISARM"><description>Request disarm.</description></entry>
-      <entry value="1" name="MAVLINK_M_ESAD_REQUEST_ARM">   <description>Request arm.</description></entry>
-    </enum>
-
-    <!-- ===== ESAD physical safety-input status (read-only reporting) ===== -->
-    <enum name="MAVLINK_M_ESAD_PIN_STATE">
-      <description>State of the physical safety pull-pin on an ESAD. Read-only status.</description>
-      <entry value="0" name="MAVLINK_M_ESAD_PIN_UNKNOWN"><description>Pin state not determined.</description></entry>
-      <entry value="1" name="MAVLINK_M_ESAD_PIN_PRESENT"><description>Pin present (device mechanically safed).</description></entry>
-      <entry value="2" name="MAVLINK_M_ESAD_PIN_REMOVED"><description>Pin removed (mechanical safety released).</description></entry>
-    </enum>
-
-    <enum name="MAVLINK_M_ESAD_ARM_DELAY_SETTING">
+    <enum name="MAVLINK_M_PAYLOAD_STATUS_FLAGS" bitmask="true">
       <description>
-        Selected arming-delay setting: how long after the in-flight-event signal
-        the ESAD will PERMIT arming. Reports the physical switch detent position.
-        This is a safety timer setting, not a fuze timing value.
+        Condition flags on payload state telemetry. Multiple bits may be set
+        at once; consumers gate on a bit test. Mirrors the MIL-STD-1553
+        status word, which sets multiple condition flags (Busy, Subsystem
+        Flag, Terminal Flag, Service Request) simultaneously. Distinct from
+        the state-bound payload_aux: the flags say which conditions hold, the
+        aux carries the human-meaningful detail of the current state.
       </description>
-      <entry value="0" name="MAVLINK_M_ESAD_ARM_DELAY_UNKNOWN"><description>Setting not determined.</description></entry>
-      <entry value="1" name="MAVLINK_M_ESAD_ARM_DELAY_90S">   <description>90 second arming delay.</description></entry>
-      <entry value="2" name="MAVLINK_M_ESAD_ARM_DELAY_60S">   <description>60 second arming delay.</description></entry>
-      <entry value="3" name="MAVLINK_M_ESAD_ARM_DELAY_30S">   <description>30 second arming delay.</description></entry>
+      <entry value="1"  name="MAVLINK_M_PAYLOAD_FLAG_BUSY"><description>An actuation is in progress (arming, disarming, activating, deactivating). 1553 Busy analog.</description></entry>
+      <entry value="2"  name="MAVLINK_M_PAYLOAD_FLAG_FAULT_SUBSYSTEM"><description>A payload-subsystem fault is active — sensor gating, power, fuze or other dependency. 1553 Subsystem Flag analog.</description></entry>
+      <entry value="4"  name="MAVLINK_M_PAYLOAD_FLAG_FAULT_INTERNAL"><description>A payload-internal error is active, distinct from a subsystem fault. 1553 Terminal Flag analog.</description></entry>
+      <entry value="8"  name="MAVLINK_M_PAYLOAD_FLAG_SERVICE_REQUEST"><description>The payload requests a service (e.g. a self-test result, a configuration acknowledgement). 1553 Service Request analog.</description></entry>
+      <entry value="16" name="MAVLINK_M_PAYLOAD_FLAG_SENSOR_GATED"><description>At least one required sensor is not reporting health = OK on this payload; arming / activation will be blocked. See required_sensor_mask on PAYLOAD_SETTINGS for the readiness recipe.</description></entry>
+      <entry value="32" name="MAVLINK_M_PAYLOAD_FLAG_FIRED"><description>Activation has fired and the state machine has advanced (payload class where the actuation is a one-shot: ESAD detonation, gun round flight, non-lethal round cycled). Set on the state report following ACTIVATE; cleared on the next report.</description></entry>
     </enum>
 
-    <enum name="MAVLINK_M_ESAD_TRIGGER_DISTANCE_MODE">
+    <enum name="MAVLINK_M_PAYLOAD_STATE_CHANGE_REQUEST">
       <description>
-        Selected trigger-distance MODE for a proximity (TOF or equivalent) safe/arm
-        device: the coarse standoff detent at which the device is permitted to
-        function. This is a SAFE/ARM standoff SELECTION among the device's defined
-        modes, NOT a settable continuous distance and NOT a fuze height-of-burst
-        configuration. It must remain a coarse enum; it must never be widened to a
-        free continuous distance value on the wire, which would turn the bus into a
-        fuze-configuration channel. On devices with a physical switch this reports
-        the switch position; on devices that accept ESAD_CONFIG it reports the mode
-        currently in effect.
+        Requested lifecycle transition for a payload. ACTIVATE is a one-shot
+        capability execution (fire, detonate, cycle), not a persistent state;
+        modeled on MIL-STD-1553 mode codes. MODE is valid only together with
+        the mode_change field on the same message. Disarm and deactivate
+        always apply; arm and activate require the carrier's release consent
+        (STORE_STATUS.release_consent = 1) on the targeted bay.
       </description>
-      <entry value="0" name="MAVLINK_M_ESAD_TRIG_DIST_UNKNOWN"><description>Mode not determined.</description></entry>
-      <entry value="1" name="MAVLINK_M_ESAD_TRIG_DIST_2M">     <description>2 metre standoff mode.</description></entry>
-      <entry value="2" name="MAVLINK_M_ESAD_TRIG_DIST_4M">     <description>4 metre standoff mode.</description></entry>
-      <entry value="3" name="MAVLINK_M_ESAD_TRIG_DIST_MANUAL"> <description>Manual mode (standoff governed by the platform/operator, not an auto standoff).</description></entry>
+      <entry value="0" name="MAVLINK_M_PAYLOAD_STATE_CHANGE_REQUEST_NONE"><description>No state change requested. Two-state zero-action per the dialect enum rule: a zero-filled control message is a valid no-op, not an arm.</description></entry>
+      <entry value="1" name="MAVLINK_M_PAYLOAD_STATE_CHANGE_REQUEST_DISARM"><description>Request disarm / render safe.</description></entry>
+      <entry value="2" name="MAVLINK_M_PAYLOAD_STATE_CHANGE_REQUEST_ARM"><description>Request arm.</description></entry>
+      <entry value="3" name="MAVLINK_M_PAYLOAD_STATE_CHANGE_REQUEST_MODE"><description>Request mode change; the selected mode is carried in mode_change.</description></entry>
+      <entry value="4" name="MAVLINK_M_PAYLOAD_STATE_CHANGE_REQUEST_ACTIVATE"><description>Request activation of the payload function (one-shot).</description></entry>
+      <entry value="5" name="MAVLINK_M_PAYLOAD_STATE_CHANGE_REQUEST_DEACTIVATE"><description>Request deactivation of the active function without a full disarm.</description></entry>
+    </enum>
+
+    <enum name="MAVLINK_M_PAYLOAD_FUNC_TYPE">
+      <description>
+        Payload capability - what the device does. Shared by PAYLOAD_STATE
+        (report of the fitted capability) and PAYLOAD_CONTROL.mode_change
+        (commanded mode when state_change = MODE).
+      </description>
+      <entry value="0" name="MAVLINK_M_PAYLOAD_FUNC_TYPE_NONE"><description>Capability unspecified / no function mode selected.</description></entry>
+      <entry value="1" name="MAVLINK_M_PAYLOAD_FUNC_TYPE_COMMAND"><description>Commanded function: acts only on explicit operator command (gun semi, manual actuation).</description></entry>
+      <entry value="2" name="MAVLINK_M_PAYLOAD_FUNC_TYPE_PROXIMITY"><description>Proximity function: acts automatically inside a device-defined standoff (ESAD proximity mode). The coarse detent the device holds is reported on PAYLOAD_SETTINGS.act_dist and must never be widened to a continuous value on the wire.</description></entry>
+      <entry value="3" name="MAVLINK_M_PAYLOAD_FUNC_TYPE_SEMI_AUTO"><description>Semi-automatic function: one round per operator trigger, sensor-assisted release window.</description></entry>
+      <entry value="4" name="MAVLINK_M_PAYLOAD_FUNC_TYPE_AUTO"><description>Automatic function under sensor control.</description></entry>
+      <entry value="5" name="MAVLINK_M_PAYLOAD_FUNC_TYPE_EXPLOIT"><description>Exploit function for a specific capability (e.g. loitering munition attack run).</description></entry>
+      <entry value="6" name="MAVLINK_M_PAYLOAD_FUNC_TYPE_DROP"><description>Drop function (gravity release; the carrier performs the actuation).</description></entry>
+      <entry value="7" name="MAVLINK_M_PAYLOAD_FUNC_TYPE_OTHER"><description>Other / implementation-specific capability.</description></entry>
+    </enum>
+
+    <enum name="MAVLINK_M_PAYLOAD_CONFIG">
+      <description>
+        Category of one config pair in a PAYLOAD_CONFIG partial update.
+        Values are category-native: WEIGHT → config_value in grams;
+        PAYLOAD_ID / STORE_ID → numeric id in config_value. The assigned
+        name is carried in the separate config_name field, not as a pair.
+        This is a closed set: a setting is settable only if a category
+        exists for it. Adding a category is a dialect change; "set
+        parameter X" is not an option on the wire.
+      </description>
+      <entry value="0" name="MAVLINK_M_PAYLOAD_CONFIG_NONE"><description>No category (padding slot).</description></entry>
+      <entry value="1" name="MAVLINK_M_PAYLOAD_CONFIG_PAYLOAD_ID"><description>Assign / change the payload instance id.</description></entry>
+      <entry value="2" name="MAVLINK_M_PAYLOAD_CONFIG_STORE_ID"><description>Assign / change the carrier slot id.</description></entry>
+      <entry value="3" name="MAVLINK_M_PAYLOAD_CONFIG_WEIGHT"><description>Payload mass assigned in the carrier's record (config_value in grams).</description></entry>
+    </enum>
+
+    <enum name="MAVLINK_M_PAYLOAD_CLASS">
+      <description>
+        Payload function class, so a consumer that knows only this dialect can
+        interpret the sensor subset and payload_aux meanings normative for the
+        fitted device. One byte on PAYLOAD_STATE and PAYLOAD_SENSOR_STATUS;
+        required non-UNKNOWN whenever class-banded fields are present.
+        The model is the MIL-STD-3014 CLASS CODE: a registered identifier
+        whose meaning is resolved against the registered per-class entries
+        (descriptors), not inline in the value. UNKNOWN consumers MUST treat
+        class-banded sensor entries as implementation-defined and display
+        them verbatim.
+      </description>
+      <entry value="0" name="MAVLINK_M_PAYLOAD_CLASS_UNKNOWN"><description>Class not established.</description></entry>
+      <entry value="1" name="MAVLINK_M_PAYLOAD_CLASS_ESAD"><description>Electronic safe-and-arm / proximity detonator class.</description></entry>
+      <entry value="2" name="MAVLINK_M_PAYLOAD_CLASS_GUN"><description>Fitted gun / weapon station class.</description></entry>
+      <entry value="3" name="MAVLINK_M_PAYLOAD_CLASS_NON_LETHAL"><description>Non-lethal capability class (flare, chaff, laser, etc.).</description></entry>
+      <entry value="4" name="MAVLINK_M_PAYLOAD_CLASS_LOITERING"><description>Loitering munition / one-way-attack class. The consent handshake for this class stays on LOITER_MUNITION_CONTROL (53036) and is not folded into PAYLOAD_CONTROL.</description></entry>
+      <entry value="5" name="MAVLINK_M_PAYLOAD_CLASS_OTHER"><description>Other / implementation-specific class.</description></entry>
+    </enum>
+
+    <enum name="MAVLINK_M_PAYLOAD_DATA_KIND">
+      <description>
+        How a sensor status value must be read. Prevents value/min/max
+        overloading on discrete or count-type readings (e.g. a breech state
+        riding value/min/max as a 0..1 range, or a remaining-rounds count
+        where max = loaded and min = 0 is not a valid operating window).
+        0 = unknown, so a zero-filled field never decodes as a substantive
+        default.
+      </description>
+      <entry value="0" name="MAVLINK_M_PAYLOAD_DATA_KIND_UNKNOWN"><description>Reading kind not reported.</description></entry>
+      <entry value="1" name="MAVLINK_M_PAYLOAD_DATA_KIND_ANALOG"><description>Continuous reading; value in sensor units, value_min / value_max the valid operating window.</description></entry>
+      <entry value="2" name="MAVLINK_M_PAYLOAD_DATA_KIND_COUNT"><description>Remaining quantity (ammo, flares, chaff); value = integer count, min = zero, max = loaded.</description></entry>
+      <entry value="3" name="MAVLINK_M_PAYLOAD_DATA_KIND_DISCRETE"><description>Two-or-few states (breech open/closed, lock engaged); value = state number per the sensor_type definition; min = 0, max = highest defined state.</description></entry>
+      <entry value="4" name="MAVLINK_M_PAYLOAD_DATA_KIND_TEXT"><description>Symbolic reading; value is an index into an implementation-defined label set, rendered verbatim by consumers.</description></entry>
+    </enum>
+
+    <enum name="MAVLINK_M_PAYLOAD_SENSOR_TYPE">
+      <description>
+        Sensor type feeding a payload's gating / status system. Replaces the
+        decel-scoped STORE_SENSOR_TYPE allocation with a class-wide one:
+        shared entries (canonical, used by multiple classes) have the
+        low values; class-band entries are grouped per class (decel /
+        landing, gun, non-lethal) so class-specific types have a home
+        without a side table. The band ceiling is the hard limit - the
+        readiness bitmask on PAYLOAD_SETTINGS is uint32_t, so the total set
+        of sensor types a carrier can ever gate must stay at or below 32;
+        plan the allocation deliberately.
+        Consumers MUST treat unknown values as "sensor present; class not
+        recognized" and may use health for gating decisions.
+        The model is the MIL-STD-3014 CLASS CODE + DESCRIPTOR pattern: the
+        sensor type entry is the descriptor; the payload_class field on the
+        message resolves which descriptor applies for a class-banded value.
+      </description>
+      <entry value="0" name="MAVLINK_M_PAYLOAD_SENSOR_UNKNOWN"><description>Type not established.</description></entry>
+      <entry value="1" name="MAVLINK_M_PAYLOAD_SENSOR_TEMP"><description>Temperature of a device-critical component.</description></entry>
+      <entry value="2" name="MAVLINK_M_PAYLOAD_SENSOR_VOLTAGE"><description>Supply voltage / battery state of the device.</description></entry>
+      <entry value="3" name="MAVLINK_M_PAYLOAD_SENSOR_MECH_STATE"><description>Generic mechanical state (lock engaged/released, round cycled).</description></entry>
+      <entry value="4" name="MAVLINK_M_PAYLOAD_SENSOR_BARO"><description>Barometric altimeter (decel / landing trigger).</description></entry>
+      <entry value="5" name="MAVLINK_M_PAYLOAD_SENSOR_MMWAVE_RADAR"><description>Millimeter-wave radar altimeter (decel / landing trigger).</description></entry>
+      <entry value="6" name="MAVLINK_M_PAYLOAD_SENSOR_AIRSPEED"><description>Airspeed sensor (decel / landing trigger).</description></entry>
+      <entry value="7" name="MAVLINK_M_PAYLOAD_SENSOR_LIDAR"><description>LIDAR rangefinder (decel / landing trigger).</description></entry>
+      <entry value="8" name="MAVLINK_M_PAYLOAD_SENSOR_TOF"><description>Time-of-flight rangefinder (decel / landing trigger).</description></entry>
+      <entry value="9" name="MAVLINK_M_PAYLOAD_SENSOR_IMU"><description>Inertial measurement unit (decel / landing trigger).</description></entry>
+      <entry value="10" name="MAVLINK_M_PAYLOAD_SENSOR_GNSS"><description>GNSS receiver (decel / landing trigger).</description></entry>
+      <entry value="11" name="MAVLINK_M_PAYLOAD_SENSOR_GUN_BARREL_TEMP"><description>Barrel temperature (gun class). KIND=ANALOG.</description></entry>
+      <entry value="12" name="MAVLINK_M_PAYLOAD_SENSOR_GUN_BREECH"><description>Breech state (gun class). KIND=DISCRETE.</description></entry>
+      <entry value="13" name="MAVLINK_M_PAYLOAD_SENSOR_GUN_ROUNDS_READY"><description>Rounds loaded and available (gun class). KIND=COUNT.</description></entry>
+      <entry value="14" name="MAVLINK_M_PAYLOAD_SENSOR_GUN_AMMO_TYPE"><description>Fitted ammunition type (gun class). KIND=TEXT.</description></entry>
+      <entry value="15" name="MAVLINK_M_PAYLOAD_SENSOR_NL_LASER_POWER"><description>Laser output level (non-lethal class).</description></entry>
+      <entry value="16" name="MAVLINK_M_PAYLOAD_SENSOR_NL_FLARES"><description>Flare cartridges remaining (non-lethal class). KIND=COUNT.</description></entry>
+      <entry value="17" name="MAVLINK_M_PAYLOAD_SENSOR_NL_CHAFF"><description>Chaff projectiles remaining (non-lethal class). KIND=COUNT.</description></entry>
     </enum>
 
     <enum name="MAVLINK_M_RWS_ARMING_STATE">
@@ -835,17 +928,10 @@
     </enum>
 
     <!-- ===== multi-store logistics drop ===== -->
-    <enum name="MAVLINK_M_STORE_SENSOR_TYPE">
-      <description>Type of sensor feeding a store's deceleration/landing-trigger system.</description>
-      <entry value="0" name="MAVLINK_M_STORE_SENSOR_UNKNOWN">     <description>Unknown / unspecified sensor.</description></entry>
-      <entry value="1" name="MAVLINK_M_STORE_SENSOR_BARO">        <description>Barometric altimeter.</description></entry>
-      <entry value="2" name="MAVLINK_M_STORE_SENSOR_MMWAVE_RADAR"><description>Millimeter-wave radar altimeter/ranger.</description></entry>
-      <entry value="3" name="MAVLINK_M_STORE_SENSOR_AIRSPEED">    <description>Airspeed sensor.</description></entry>
-      <entry value="4" name="MAVLINK_M_STORE_SENSOR_LIDAR">       <description>LIDAR rangefinder.</description></entry>
-      <entry value="5" name="MAVLINK_M_STORE_SENSOR_TOF">         <description>Time-of-flight rangefinder (generic, non-LIDAR).</description></entry>
-      <entry value="6" name="MAVLINK_M_STORE_SENSOR_IMU">         <description>Inertial measurement unit (accel/gyro).</description></entry>
-      <entry value="7" name="MAVLINK_M_STORE_SENSOR_GNSS">        <description>GNSS receiver.</description></entry>
-    </enum>
+    <!-- MAVLINK_M_STORE_SENSOR_TYPE is superseded by
+         MAVLINK_M_PAYLOAD_SENSOR_TYPE (a class-agnostic registry with shared
+         and class-band entries). STORE_SENSOR_TYPE shared-band entries are
+         retained at values 4-10 in the new enum. -->
 
     <enum name="MAVLINK_M_SENSOR_HEALTH">
       <description>Health state of an individual store sensor.</description>
@@ -1082,10 +1168,10 @@
     <enum name="MAV_CMD">
       <description>MAVLink-M store-handling commands. Sent via COMMAND_LONG/COMMAND_INT; responses via COMMAND_ACK.</description>
       <entry value="53090" name="MAV_CMD_MAVLINK_M_STORE_ARM">
-        <description>Safe a store's ESAD. A command carries no time_usec, so no stop can be ordered against an arm sent this way (SAFETY BOUNDARIES): receivers answer an arm (Arm = 1) with MAV_RESULT_DENIED, and ESAD_ARMING arms.</description>
+        <description>Safe a store's payload. A command carries no time_usec, so no stop can be ordered against an arm sent this way (SAFETY BOUNDARIES): receivers answer an arm (Arm = 1) with MAV_RESULT_DENIED, and PAYLOAD_CONTROL arms. Gate: STORE_STATUS.release_consent = 1 is required for an arm on the targeted bay; a disarm is always accepted.</description>
         <param index="1" label="Store ID">Target store instance (0 = every store on the receiving system).</param>
-        <param index="2" label="Arm">0 = safe/disarm. 1 = arm, which receivers deny; arm with ESAD_ARMING.</param>
-        <param index="3" label="Challenge Hash">Ignored: a safe applies whatever the ESAD challenge holds, as an ESAD_ARMING DISARM does.</param>
+        <param index="2" label="Arm">0 = safe/disarm. 1 = arm, which receivers deny; arm with PAYLOAD_CONTROL.</param>
+        <param index="3" label="Challenge Hash">Ignored: a safe applies whatever the payload challenge holds, as a PAYLOAD_CONTROL DISARM does.</param>
         <param index="4">Reserved (0).</param>
         <param index="5">Reserved (0).</param>
         <param index="6">Reserved (0).</param>
@@ -1094,7 +1180,7 @@
       <entry value="53091" name="MAV_CMD_MAVLINK_M_STORE_RUN_BIT">
         <description>Run a built-in self-test (BIT) on a store. Never sent with target_system 0; receivers ignore one that is.</description>
         <param index="1" label="Store ID">Target store instance (0 = every store on the receiving system).</param>
-        <param index="2" label="Scope">0 = full BIT, 1 = sensors only, 2 = ESAD only.</param>
+        <param index="2" label="Scope">0 = full BIT, 1 = sensors only, 2 = payload-class-only.</param>
         <param index="3">Reserved (0).</param>
         <param index="4">Reserved (0).</param>
         <param index="5">Reserved (0).</param>
@@ -1104,7 +1190,7 @@
       <entry value="53092" name="MAV_CMD_MAVLINK_M_STORE_REQUEST_STATUS">
         <description>Request status push from a store.</description>
         <param index="1" label="Store ID">Target store instance (0 = every store on the receiving system).</param>
-        <param index="2" label="What">0 = STORE_STATUS only, 1 = all STORE_SENSOR_STATUS, 2 = both.</param>
+        <param index="2" label="What">0 = STORE_STATUS only, 1 = all STORE_SENSOR_STATUS plus PAYLOAD_SENSOR_STATUS, 2 = both.</param>
         <param index="3">Reserved (0).</param>
         <param index="4">Reserved (0).</param>
         <param index="5">Reserved (0).</param>
@@ -1114,7 +1200,7 @@
       <entry value="53093" name="MAV_CMD_MAVLINK_M_STORE_SET_DECEL_THRESHOLD">
         <description>Set the deceleration/landing-system trigger threshold for a store. Never sent with target_system 0; receivers ignore one that is.</description>
         <param index="1" label="Store ID">Target store instance (0 = every store on the receiving system).</param>
-        <param index="2" label="Sensor Type">Sensor (MAVLINK_M_STORE_SENSOR_TYPE) that gates deployment.</param>
+        <param index="2" label="Sensor Type">Sensor (MAVLINK_M_PAYLOAD_SENSOR_TYPE) that gates deployment.</param>
         <param index="3" label="Threshold">Threshold value in the sensor's native units.</param>
         <param index="4" label="Direction">0 = trigger when reading falls below threshold, 1 = trigger when reading rises above threshold.</param>
         <param index="5">Reserved (0).</param>
@@ -1570,72 +1656,73 @@
     </message>
 
     <!-- ============================================================ -->
-    <!-- 53030: ESAD_STATE -->
+    <!-- 53030: PAYLOAD_STATE (formerly ESAD_STATE)                  -->
     <!-- ============================================================ -->
-    <message id="53030" name="ESAD_STATE">
-      <description>Electronic Safe and Arm Device (ESAD) telemetry for one ESAD instance on a store. Reports arming, munition, and ignition states, fault flags, and software identity. esad_id identifies the device; store_id identifies the physical bay/store.</description>
-      <field type="uint64_t"  name="time_usec"         units="us"  >Timestamp (UNIX epoch, microseconds UTC).</field>
-      <field type="uint8_t"   name="esad_id"                       >Vehicle-local ESAD instance identifier. Must be 1-254. 0 is invalid for ESAD_STATE, 255 is reserved. A system that accepts ESAD_ARMING or ESAD_CONFIG with esad_id = 0 sets the same arming_challenge_hash on every ESAD such a command can select.</field>
-      <field type="uint32_t"  name="arming_challenge_hash"         >Challenge for this ESAD instance, which an ARM or an ESAD_CONFIG must carry. It ties a command to this state and is not secret.</field>
-      <field type="uint32_t"  name="fault_flags"       enum="MAVLINK_M_ESAD_FAULT_FLAGS">Active fault flag bitmask.</field>
-      <field type="float"     name="input_1"                       >Analog/digital input 1 (implementation-defined). For the standard safety inputs use the typed fields below instead.</field>
-      <field type="float"     name="input_2"                       >Analog/digital input 2 (implementation-defined). For the standard safety inputs use the typed fields below instead.</field>
-      <field type="uint8_t[8]" name="sw_version_hash"              >Software version as 8-byte short Git hash.</field>
-      <field type="uint8_t"   name="arming_status"    enum="MAVLINK_M_ESAD_ARMING_STATUS">Current arming state.</field>
-      <field type="uint8_t"   name="munition_status"  enum="MAVLINK_M_ESAD_MUNITION_STATUS">Current munition state.</field>
-      <field type="uint8_t"   name="ignition_status"  enum="MAVLINK_M_ESAD_IGNITION_STATUS">Current ignition circuit state.</field>
-      <field type="uint8_t"   name="munition_type"                 >Munition/store type identifier (implementation-defined).</field>
-      <field type="uint8_t"   name="store_id"                      >Store instance identifier. Fixed physical bay assignment: a bay keeps its store_id permanently, and when a store is expended the bay may be reloaded under the same store_id. IDs never renumber. 0 = not applicable / single store. This is the canonical definition of store_id across the dialect.</field>
-      <field type="uint8_t"   name="pin_state"        enum="MAVLINK_M_ESAD_PIN_STATE">Physical safety pull-pin state (read-only status).</field>
-      <field type="uint8_t"   name="arm_delay_setting" enum="MAVLINK_M_ESAD_ARM_DELAY_SETTING">Selected arming-delay switch position (90/60/30 s). The chosen setting.</field>
-      <field type="int16_t"   name="arm_delay_remaining_s" units="s">Live arming-delay countdown: seconds remaining after the in-flight-event signal until arming is permitted. -1 = not counting / not applicable. Distinct from arm_delay_setting (the switch position).</field>
-      <field type="uint8_t"   name="trigger_distance_mode" enum="MAVLINK_M_ESAD_TRIGGER_DISTANCE_MODE">Trigger-distance standoff mode currently in effect (coarse selection, not a distance value).</field>
-      <field type="uint8_t[16]" name="track_uid">Track UID (UUID) of the engagement this store is armed for, when applicable. Ties the armed state to a specific authorized track so a monitoring station sees "armed against track X," not merely "an ESAD is hot." All-zero if not associated with a track, and cleared to all-zero when the store is disarmed.</field>
+    <message id="53030" name="PAYLOAD_STATE">
+      <description>Telemetry for one fitted payload: capability, class, sequential lifecycle state, condition flags, and the state-bound auxiliary datum. Replaces ESAD_STATE, whose arming / munition / ignition state triad and fault flags are absorbed into payload_state and status_flags. payload_id identifies the payload instance (operator / C2 perception); store_id identifies the physical bay (carrier perception). payload_id = 0 reports the unfit slot itself; a consumer that knows only this dialect file can interpret every field, including the class-banded meanings, from payload_class plus the payload enums (a 3014 CLASS CODE + DESCRIPTOR resolution).</description>
+      <field type="uint64_t"  name="time_usec"         units="us">Timestamp (UNIX epoch, microseconds UTC).</field>
+      <field type="uint8_t"   name="payload_id">Payload instance id, assigned by the operator / C2. 0 = no payload fitted in this store (reporting the slot's state). 1-254 = fitted instance. 255 = reserved.</field>
+      <field type="uint8_t"   name="store_id">Store instance identifier. Fixed physical bay assignment: a bay keeps its store_id permanently, and when a store is expended the bay may be reloaded under the same store_id. IDs never renumber. 0 = not applicable / single store. This is the canonical definition of store_id across the dialect.</field>
+      <field type="uint8_t[16]" name="payload_challenge_hash">Challenge hash (128 bits, little-endian) for this payload instance, which a PAYLOAD_CONTROL or PAYLOAD_CONFIG must carry. It ties a command to this state and is not secret. Receivers compare it byte-for-byte; all-zero if no payload is fitted.</field>
+      <field type="uint8_t"   name="payload_function" enum="MAVLINK_M_PAYLOAD_FUNC_TYPE">Reported payload capability (what the device does; e.g. command, proximity, semi-auto). NONE if not yet established.</field>
+      <field type="uint8_t"   name="payload_class"  enum="MAVLINK_M_PAYLOAD_CLASS">Function class of the fitted device (ESAD / gun / non-lethal / loitering / other). Lets a consumer interpret the class-banded sensor types and auxiliary meanings normative for this payload without a side table. MUST be non-UNKNOWN whenever a class-banded field is present. UNKNOWN if not yet established.</field>
+      <field type="uint8_t"   name="payload_state"    enum="MAVLINK_M_PAYLOAD_STATUS">Reported lifecycle state (sequential, mutually exclusive).</field>
+      <field type="uint8_t"   name="status_flags"     enum="MAVLINK_M_PAYLOAD_STATUS_FLAGS">Condition flags (bitmask, multiple may be set): busy, subsystem fault, internal fault, service request, sensor-gated, fired. Distinct from payload_aux: flags say which conditions hold, the aux carries the state-bound detail.</field>
+      <field type="char[16]"  name="payload_aux">State-bound auxiliary datum: at most one at a time, meaning defined by the payload_state it is reported with (e.g. remaining safe-separation seconds while in SST, error descriptor while in ERROR). "0" / empty if none. Opaque to a receiver except where the state entry names its meaning; display other values verbatim.</field>
+      <field type="uint8_t[16]" name="track_uid">Track UID (UUID) of the engagement this store is armed for, when applicable. Ties the armed state to a specific authorized track so a monitoring station sees "armed against track X," not merely "a payload is hot." All-zero if not associated with a track, and cleared to all-zero when the store is disarmed.</field>
     </message>
 
     <!-- ============================================================ -->
-    <!-- 53031: ESAD_ARMING -->
+    <!-- 53031: PAYLOAD_CONTROL (formerly ESAD_ARMING)               -->
     <!-- ============================================================ -->
-    <message id="53031" name="ESAD_ARMING">
-      <description>ESAD arming command for one or more ESAD instances on the receiving system. An ARM must carry the challenge the selected ESAD advertises in ESAD_STATE; with esad_id = 0 it applies only if every local ESAD selected by store_id advertises arming_challenge_hash, and is otherwise rejected, so an ARM never applies in part. A DISARM applies to every selected local ESAD without checking arming_challenge_hash, so no ESAD's state can block it; as for any stop, MAVLink message signing on the link authenticates the sender. An addressed ARM whose esad_id and store_id select no local ESAD is rejected, and an addressed DISARM that selects none is answered MAVLINK_M_ACK_NOT_APPLICABLE; a DISARM sent to every system that selects no local ESAD is not acted on or answered. Each system judges only its own ESADs, so a command that reaches several systems can apply on some and not on others; the originator confirms the result for each system from its MAVLINK_M_ACK and ESAD_STATE.</description>
+    <message id="53031" name="PAYLOAD_CONTROL">
+      <description>Payload control command requesting a state change (or mode change) on one or more payload instances on the receiving system. An ARM or ACTIVATE must carry the challenge the selected payload advertises in PAYLOAD_STATE; with payload_id = 0 it applies only if every local payload selected by store_id advertises that hash, and is otherwise rejected, so an ARM never applies in part. A DISARM or DEACTIVATE applies to every selected local payload without checking the challenge hash, so no payload's state can block it; as for any stop, MAVLink message signing on the link authenticates the sender. An addressed ARM or ACTIVATE whose payload_id and store_id select no local payload is rejected, and an addressed DISARM that selects none is answered MAVLINK_M_ACK_NOT_APPLICABLE; a DISARM sent to every system that selects no local payload is not acted on or answered. Each system judges only its own payloads, so a command that reaches several systems can apply on some and not on others; the originator confirms the result for each system from its MAVLINK_M_ACK and PAYLOAD_STATE. ARM and ACTIVATE additionally require the carrier's release consent (STORE_STATUS.release_consent = 1) on each targeted bay.</description>
       <field type="uint64_t" name="time_usec"            units="us">Timestamp (UNIX epoch, microseconds UTC).</field>
-      <field type="uint8_t"  name="target_system"                  >System ID of the intended recipient. 0 (every system) is valid only for MAVLINK_M_ESAD_REQUEST_DISARM, which each receiving system applies to its own ESADs; receivers ignore an arm request sent with 0.</field>
-      <field type="uint8_t"  name="target_component"               >Component ID of the intended recipient within target_system. 0 = every component of that system. Ignored when target_system is 0.</field>
-      <field type="uint8_t"  name="esad_id"                        >Vehicle-local ESAD instance identifier to arm or disarm. 0 = every local ESAD selected by store_id, 1-254 = specific ESAD instance, 255 = reserved.</field>
-      <field type="uint32_t" name="arming_challenge_hash"          >Challenge hash the selected ESAD advertises in ESAD_STATE. Checked for an ARM, where with esad_id = 0 every selected local ESAD must advertise it; not checked for a DISARM.</field>
-      <field type="uint8_t"  name="arming_request"  enum="MAVLINK_M_ESAD_ARMING_REQUEST">Requested arming state change.</field>
-      <field type="uint8_t"  name="store_id"                       >Target store instance identifier. 0 = every store on the receiving system.</field>
-      <field type="uint8_t[16]" name="track_uid">Track UID (see TRACK_IDENTITY) of the engagement an ARM is for, reported back in ESAD_STATE.track_uid. All-zero if the arming is not tied to a track. Ignored for DISARM.</field>
+      <field type="uint8_t"  name="target_system">System ID of the intended recipient. 0 (every system) is valid only for MAVLINK_M_PAYLOAD_STATE_CHANGE_REQUEST_DISARM and MAVLINK_M_PAYLOAD_STATE_CHANGE_REQUEST_DEACTIVATE, which each receiving system applies to its own payloads; receivers ignore an arm or activate request sent with 0.</field>
+      <field type="uint8_t"  name="target_component">Component ID of the intended recipient within target_system. 0 = every component of that system. Ignored when target_system is 0.</field>
+      <field type="uint8_t"  name="payload_id">Target payload instance. 0 = all instances selected by store_id. 1-254 = specific instance. 255 = reserved.</field>
+      <field type="uint8_t"  name="store_id">Target store instance. 0 = all stores on the receiving system.</field>
+      <field type="uint8_t[16]" name="payload_challenge_hash">Challenge hash (128 bits, little-endian) the selected payload advertises in PAYLOAD_STATE. Checked for ARM / ACTIVATE, where with payload_id = 0 every selected local payload must advertise it; not checked for a DISARM or DEACTIVATE.</field>
+      <field type="uint8_t"  name="state_change" enum="MAVLINK_M_PAYLOAD_STATE_CHANGE_REQUEST">Requested state change (none, disarm, arm, mode, activate, deactivate).</field>
+      <field type="uint8_t"  name="mode_change"  enum="MAVLINK_M_PAYLOAD_FUNC_TYPE">Requested mode / function change (command, proximity, semi-auto, auto). Interpreted only when state_change = MODE; NONE otherwise.</field>
+      <field type="uint8_t[16]" name="track_uid">Track UID (see TRACK_IDENTITY) of the engagement an ARM is for, reported back in PAYLOAD_STATE.track_uid. All-zero if the arming is not tied to a track. Ignored for DISARM.</field>
     </message>
 
     <!-- ============================================================ -->
-    <!-- 53032: ESAD_CONFIG -->
+    <!-- 53032: PAYLOAD_CONFIG (formerly ESAD_CONFIG)                -->
     <!-- ============================================================ -->
-    <message id="53032" name="ESAD_CONFIG">
+    <message id="53032" name="PAYLOAD_CONFIG">
       <description>
-        Configuration command for an ESAD that accepts live configuration of a
-        safe/arm parameter (e.g. a proximity device whose trigger-distance mode
-        is set from the FMU or edge compute rather than a physical switch).
-        Checked the same way as an ESAD_ARMING arm: arming_challenge_hash must
-        match the value the selected ESAD last advertised in ESAD_STATE, so a
-        command made for an older ESAD state does not apply. The hash is public,
-        since ESAD_STATE goes to every system; MAVLink message signing on the
-        link authenticates the sender. With esad_id = 0, store_id = 0, or both,
-        a receiving system applies the configuration only if every local ESAD
-        selected advertises arming_challenge_hash, and otherwise rejects it. A
-        command that selects no local ESAD is rejected.
-        Only coarse, device-defined SAFE/ARM modes may be set here; this message
-        must never carry a free continuous distance, a fuze timing value, or any
-        height-of-burst configuration. The resulting mode is reported back in
-        ESAD_STATE.trigger_distance_mode.
+        Authenticated PARTIAL settings update for a fitted payload: only the
+        setting(s) actually changing are carried (update_count
+        config_type/config_value pairs and optionally config_name), never the
+        full settings table, so a one-field change is a short message.
+        Checked the same way as a PAYLOAD_CONTROL command: the
+        payload_challenge_hash must match the value the selected payload last
+        advertised in PAYLOAD_STATE, so a command made for an older state
+        does not apply. The hash is public, since PAYLOAD_STATE goes to every
+        system; MAVLink message signing on the link authenticates the sender.
+        With payload_id = 0 and/or store_id = 0, a receiving system applies
+        the configuration only if every local payload selected advertises the
+        payload_challenge_hash, and otherwise rejects it. A command that
+        selects no local payload is rejected.
+        Numeric pairs are category-native (WEIGHT in grams; PAYLOAD_ID /
+        STORE_ID as numeric ids); the assigned name travels in config_name.
+        Only coarse, device-defined settings may be set here; this message
+        must never carry a free continuous distance, a fuze timing value, or
+        any height-of-burst configuration. The carrier's authoritative table
+        is reported by PAYLOAD_SETTINGS.
       </description>
       <field type="uint64_t" name="time_usec"            units="us">Timestamp (UNIX epoch, microseconds UTC).</field>
-      <field type="uint8_t"  name="target_system"                  >System ID of the intended recipient. Never 0; receivers ignore an ESAD_CONFIG sent to every system.</field>
-      <field type="uint8_t"  name="target_component"               >Component ID of the intended recipient within target_system. 0 = every component of that system. Ignored when target_system is 0.</field>
-      <field type="uint32_t" name="arming_challenge_hash"          >Challenge hash the selected ESAD advertises in ESAD_STATE. With esad_id = 0 or store_id = 0, every selected local ESAD must advertise this hash.</field>
-      <field type="uint8_t"  name="esad_id"                        >Vehicle-local ESAD instance identifier to configure. 0 = every local ESAD selected by store_id, 1-254 = specific ESAD instance, 255 = reserved.</field>
-      <field type="uint8_t"  name="store_id"                       >Target store instance identifier. 0 = every store on the receiving system.</field>
-      <field type="uint8_t"  name="trigger_distance_mode" enum="MAVLINK_M_ESAD_TRIGGER_DISTANCE_MODE">Requested coarse trigger-distance standoff mode. Coarse selection only.</field>
+      <field type="uint8_t"  name="target_system">System ID of the intended recipient. Never 0; receivers ignore a PAYLOAD_CONFIG sent to every system.</field>
+      <field type="uint8_t"  name="target_component">Component ID of the intended recipient within target_system. 0 = every component of that system. Ignored when target_system is 0.</field>
+      <field type="uint8_t"  name="payload_id">Target payload instance to configure. 0 = all instances selected by store_id. 1-254 = specific instance. 255 = reserved.</field>
+      <field type="uint8_t"  name="store_id">Target store instance. 0 = all stores on the receiving system.</field>
+      <field type="uint8_t[16]" name="payload_challenge_hash">Challenge hash (128 bits, little-endian) the selected payload advertises in PAYLOAD_STATE. With payload_id = 0 or store_id = 0, every selected local payload must advertise this hash.</field>
+      <field type="uint8_t"  name="update_count">Number of valid config_type/config_value pairs (0-4). 0 = name-only update.</field>
+      <field type="uint8_t[4]"  name="config_type" enum="MAVLINK_M_PAYLOAD_CONFIG">Category of each pair; slots at and past update_count MUST be NONE.</field>
+      <field type="uint16_t[4]" name="config_value">Category-native value per pair, little-endian (WEIGHT in grams; PAYLOAD_ID / STORE_ID as numeric id). 0 = padding slot.</field>
+      <field type="char[50]"  name="config_name">Newly assigned payload name (null-terminated). Empty = name unchanged.</field>
     </message>
 
     <!-- ============================================================ -->
@@ -1884,9 +1971,10 @@
       <field type="float"    name="value_min"                invalid="NaN">Lower bound of the valid operating range, native units. NaN if unspecified.</field>
       <field type="float"    name="value_max"                invalid="NaN">Upper bound of the valid operating range, native units. NaN if unspecified.</field>
       <field type="uint8_t"  name="store_id"                 >Store instance identifier this sensor belongs to.</field>
-      <field type="uint8_t"  name="sensor_type" enum="MAVLINK_M_STORE_SENSOR_TYPE">Type of sensor.</field>
+      <field type="uint8_t"  name="sensor_type" enum="MAVLINK_M_PAYLOAD_SENSOR_TYPE">Type of sensor (shared-band entries only on this carrier-side channel; class-banded entries belong on PAYLOAD_SENSOR_STATUS keyed to the fitted payload's class).</field>
       <field type="uint8_t"  name="sensor_index"            >Index when multiple sensors of the same type exist on a store (0-based).</field>
       <field type="uint8_t"  name="health"      enum="MAVLINK_M_SENSOR_HEALTH">Health state of this sensor.</field>
+      <field type="uint8_t"  name="data_kind"   enum="MAVLINK_M_PAYLOAD_DATA_KIND">How value, value_min and value_max must be read (analog / count / discrete / text). Unknown if not reported.</field>
     </message>
 
     <!-- ============================================================ -->
@@ -1894,18 +1982,28 @@
     <!-- ============================================================ -->
     <message id="53033" name="STORE_STATUS">
       <description>
-        Per-store roll-up summary for release decisions. Aggregates ESAD arming
-        state and deceleration-sensor health into a single readiness value so an
-        operator/GCS can gate release without parsing every sensor message.
+        Per-store roll-up summary, carrier-side, for release decisions.
+        Aggregates the fitted payload's lifecycle state (mirrored from the
+        carrier's last received PAYLOAD_STATE for convenience) and
+        deceleration-sensor health into a single readiness value, plus the
+        carrier's release consent for the bay, so an operator/GCS can gate
+        release without parsing every sensor message.
+        release_consent is the carrier's authorization for this store to move
+        into a hazardous state (PAYLOAD_CONTROL ARM / ACTIVATE). It mirrors
+        the MIL-STD-1760 Release Consent discrete: a carrier-side state,
+        scoped to a single bay, gating the move into hazardous states only -
+        DISARM and DEACTIVATE always apply. It is not a payload-type
+        clearance and not a release/drop authorization.
       </description>
       <field type="uint64_t" name="time_usec"      units="us"  >Timestamp (UNIX epoch, microseconds UTC).</field>
-      <field type="uint32_t" name="sensor_fault_mask"          >Bitmask of MAVLINK_M_STORE_SENSOR_TYPE values currently NOT healthy (bit = 1&lt;&lt;sensor_type).</field>
+      <field type="uint32_t" name="sensor_fault_mask"          >Bitmask of MAVLINK_M_PAYLOAD_SENSOR_TYPE shared-band values currently NOT healthy (bit = 1&lt;&lt;sensor_type).</field>
       <field type="uint8_t"  name="store_id"                   >Store instance identifier.</field>
       <field type="uint8_t"  name="store_count"                >Total number of stores on the carrier (lets the GCS know how many to expect). 0 if unknown.</field>
       <field type="uint8_t"  name="readiness"   enum="MAVLINK_M_STORE_READINESS">Roll-up release-readiness state.</field>
-      <field type="uint8_t"  name="arming_status" enum="MAVLINK_M_ESAD_ARMING_STATUS">ESAD arming state of this store (mirrored for convenience).</field>
+      <field type="uint8_t"  name="arming_status" enum="MAVLINK_M_PAYLOAD_STATUS">Lifecycle state of the fitted payload in this store (mirrored from the carrier's last received PAYLOAD_STATE for convenience). Re-pointed from the old ESAD arming state; wire-breaking.</field>
       <field type="uint8_t"  name="sensors_healthy"           >Count of sensors reporting OK.</field>
       <field type="uint8_t"  name="sensors_total"             >Total count of sensors on this store.</field>
+      <field type="uint8_t"  name="release_consent"           >Carrier release consent for this store: 0 = not currently authorized for ARM/ACTIVATE on this bay, 1 = authorized (MIL-STD-1760 Release Consent analog). DISARM and DEACTIVATE are always accepted.</field>
     </message>
 
     <!-- ============================================================ -->
@@ -2082,7 +2180,7 @@
         loaded so a gateway maps real data rather than synthesizing it; it does
         NOT carry fuze/employment configuration, which is device-internal and
         out of scope for this dialect. Keyed by store_id to correlate with
-        ESAD_STATE / STORE_STATUS. Low-rate: changes on load and on release.
+        PAYLOAD_STATE / STORE_STATUS. Low-rate: changes on load and on release.
       </description>
       <field type="uint64_t" name="time_usec"     units="us"  >Timestamp (UNIX epoch, microseconds UTC).</field>
       <field type="float"    name="mass"          units="kg"  >Munition mass. NaN if unknown.</field>
@@ -2090,10 +2188,10 @@
       <field type="char[30]" name="nomenclature"              >Munition nomenclature/designation (null-terminated).</field>
       <field type="uint16_t" name="quantity_remaining"        >Count of this munition remaining available on the store/carrier.</field>
       <field type="uint8_t"  name="store_id"                  >Store instance identifier.</field>
-      <field type="uint8_t"  name="munition_type"             >Munition type code (implementation-defined; consistent with ESAD_STATE.munition_type).</field>
+      <field type="uint8_t"  name="munition_type"             >Munition type code (implementation-defined; consistent with the payload_class reported on PAYLOAD_STATE for this store).</field>
       <field type="uint8_t"  name="guidance"      enum="MAVLINK_M_MUNITION_GUIDANCE">Coarse guidance category.</field>
       <field type="uint8_t"  name="warhead"       enum="MAVLINK_M_MUNITION_WARHEAD">Coarse warhead category.</field>
-      <field type="uint8_t"  name="arming_status" enum="MAVLINK_M_ESAD_ARMING_STATUS">Safe/armed state (mirrored from ESAD for convenience).</field>
+      <field type="uint8_t"  name="arming_status" enum="MAVLINK_M_PAYLOAD_STATUS">Lifecycle state of the fitted payload in this store (mirrored from PAYLOAD_STATE for convenience). Re-pointed from the old ESAD arming state; wire-breaking.</field>
       <field type="uint8_t"  name="fuze_health"   enum="MAVLINK_M_FUZE_HEALTH">Coarse fuze HEALTH (functioning/fault), not fuze configuration.</field>
       <field type="uint8_t"  name="external_track_type" enum="MAVLINK_M_TRACK_NUMBER_TYPE">Namespace of external_track_number.</field>
       <field type="uint8_t" name="munition_family" enum="MAVLINK_M_MUNITION_FAMILY">Composite-munition family (finer than the warhead/guidance pair). Descriptive.</field>
@@ -2118,6 +2216,12 @@
         and MAVLINK_M_ENGAGEMENT_DIRECTIVE_CHECK_FIRE as
         MAVLINK_M_LM_TERMINATE_WAVE_OFF held until a
         MAVLINK_M_ENGAGEMENT_DIRECTIVE_RESUME.
+        When the loitering munition is also fitted in a store, its payload
+        telemetry (lifecycle state, condition flags, sensor status) flows
+        through the PAYLOAD_* messages with payload_class =
+        MAVLINK_M_PAYLOAD_CLASS_LOITERING; this family remains distinct
+        because the consent handshake is load-bearing for the LOITERING class
+        and not a generic attribute.
 
         Both ends send it. A munition sends consent_state
         MAVLINK_M_LM_CONSENT_REQUESTED addressed to the human authority for the
@@ -2141,6 +2245,82 @@
       <field type="int32_t"   name="loiter_lat"    units="degE7">Loiter/orbit station latitude, WGS84. INT32_MAX = not provided (0 is a valid coordinate).</field>
       <field type="int32_t"   name="loiter_lon"    units="degE7">Loiter/orbit station longitude, WGS84. INT32_MAX = not provided (0 is a valid coordinate).</field>
       <field type="uint8_t"   name="dmpi_kind"     enum="MAVLINK_M_DMPI_REFERENCE_KIND">How the desired point of impact is referenced (no mensurated coordinate).</field>
+    </message>
+
+    <!-- ============================================================ -->
+    <!-- 53037: PAYLOAD_SETTINGS (response; request is 53038)         -->
+    <!-- ============================================================ -->
+    <message id="53037" name="PAYLOAD_SETTINGS">
+      <description>
+        Carrier-assigned settings for a stored slot: the carrier's
+        bookkeeping view of what is fitted. Response to PAYLOAD_GET_SETTINGS
+        (53038); the carrier fills the same scope (payload_id / store_id) as
+        requested. Low-rate: changes on loading, unloading, or setting
+        assignment. SST duration and activation distance appear here for
+        AWARENESS ONLY: they are device-defined coarse detents set locally
+        (physical switch or component bus) and are intentionally not
+        configurable over this bus, per the dialect's safe/arm boundary rule
+        (no free continuous distance / delay value on the wire).
+        required_sensor_mask is the readiness RECIPE: the subset of sensor
+        types that MUST be health = OK for this slot's release / function
+        decision. A consumer may recompute go/no-go from PAYLOAD_SENSOR_STATUS
+        and STORE_SENSOR_STATUS alone.
+      </description>
+      <field type="uint64_t" name="time_usec"   units="us">Timestamp (UNIX epoch, microseconds UTC).</field>
+      <field type="uint8_t"  name="payload_id">Payload instance in this scope (0 = unfitted slot).</field>
+      <field type="uint8_t"  name="store_id">Carrier slot these settings belong to.</field>
+      <field type="char[50]"  name="payload_name">Assigned payload name (null-terminated). Empty = unnamed.</field>
+      <field type="float"    name="payload_weight" units="kg" invalid="NaN">Mass of the stored payload as recorded by the carrier. NaN if unassigned.</field>
+      <field type="uint16_t" name="sst_len"      units="s">Configured safe-separation timer in effect on the device. 0 = device enforces none. Awareness only, not settable here.</field>
+      <field type="uint16_t" name="act_dist"     units="cm">Configured maximum activation distance in effect on the device (proximity-type payloads). 0 = device enforces none. Awareness only, not settable here.</field>
+      <field type="uint32_t" name="required_sensor_mask">Bitmask of MAVLINK_M_PAYLOAD_SENSOR_TYPE values that must report health = OK for this slot's readiness decision. 0 = no sensor gate. Defines the go/no-go recipe so a consumer can recompute readiness from PAYLOAD_SENSOR_STATUS.</field>
+      <field type="uint8_t[16]" name="payload_challenge_hash">Active challenge hash for this slot (lets the requester authenticate subsequent control). All-zero if no payload is fitted.</field>
+    </message>
+
+    <!-- ============================================================ -->
+    <!-- 53038: PAYLOAD_GET_SETTINGS (request; response 53037)        -->
+    <!-- ============================================================ -->
+    <message id="53038" name="PAYLOAD_GET_SETTINGS">
+      <description>
+        Query the carrier for PAYLOAD_SETTINGS (53037) for the scope
+        below; the carrier responds with the same payload_id / store_id
+        scope. Read-only: allowed even with an all-zero challenge hash.
+      </description>
+      <field type="uint64_t" name="time_usec"   units="us">Timestamp (UNIX epoch, microseconds UTC).</field>
+      <field type="uint8_t"  name="payload_id">Scope: which payload's settings are needed (0 = any payload in the slot scope).</field>
+      <field type="uint8_t"  name="store_id">Scope: which carrier slot (0 = whole carrier).</field>
+      <field type="uint8_t[16]" name="payload_challenge_hash">Last known active challenge hash for the scope; all-zero if not yet authenticated (allowed for this read-only query).</field>
+    </message>
+
+    <!-- ============================================================ -->
+    <!-- 53039: PAYLOAD_SENSOR_STATUS (payload-side per-sensor)       -->
+    <!-- ============================================================ -->
+    <message id="53039" name="PAYLOAD_SENSOR_STATUS">
+      <description>
+        Per-sensor health and reading for one fitted payload. Payload-side
+        channel, bounded: pulled by the carrier or a GCS, or emitted at a
+        bounded rate by the payload. The payload's autonomous footprint
+        stays at the one condition-flag channel on PAYLOAD_STATE
+        (status_flags); per-sensor detail flows on this message.
+        The sensor set is class-scoped: a class-band sensor_type entry is
+        normative for the payload_class named on this message (the
+        3014 CLASS CODE + DESCRIPTOR model). The carrier-side counterpart
+        (53034 STORE_SENSOR_STATUS) covers the carrier's own decel /
+        gate sensors that gate release. The two messages are distinct
+        channels, not duplicates; both draw from the same
+        MAVLINK_M_PAYLOAD_SENSOR_TYPE registry.
+      </description>
+      <field type="uint64_t" name="time_usec"    units="us">Timestamp (UNIX epoch, microseconds UTC).</field>
+      <field type="float"    name="value"                     invalid="NaN">Current sensor reading in the sensor's native units. NaN if invalid.</field>
+      <field type="float"    name="value_min"                 invalid="NaN">Lower bound of the valid operating range, native units. NaN if unspecified.</field>
+      <field type="float"    name="value_max"                 invalid="NaN">Upper bound of the valid operating range, native units. NaN if unspecified.</field>
+      <field type="uint8_t"  name="payload_id">Payload instance this sensor belongs to. 1-254 = fitted instance; 0 invalid here (the carrier-side message covers the slot).</field>
+      <field type="uint8_t"  name="store_id">Carrier slot containing the payload this sensor belongs to.</field>
+      <field type="uint8_t"  name="payload_class"  enum="MAVLINK_M_PAYLOAD_CLASS">Function class of the payload. Resolves the meaning of class-banded sensor_type entries per the entry description. Unknown if not yet established.</field>
+      <field type="uint8_t"  name="sensor_type"   enum="MAVLINK_M_PAYLOAD_SENSOR_TYPE">Type of sensor (shared-band or class-band entries).</field>
+      <field type="uint8_t"  name="sensor_index">Index when multiple sensors of the same type exist on the payload (0-based).</field>
+      <field type="uint8_t"  name="health"        enum="MAVLINK_M_SENSOR_HEALTH">Health state of this sensor.</field>
+      <field type="uint8_t"  name="data_kind"     enum="MAVLINK_M_PAYLOAD_DATA_KIND">How value, value_min and value_max must be read (analog / count / discrete / text). Unknown if not reported.</field>
     </message>
 
   </messages>

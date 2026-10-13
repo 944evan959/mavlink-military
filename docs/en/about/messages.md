@@ -4,23 +4,28 @@ MAVLink-M's messages and commands fall into four areas, plus one
 acknowledgment that serves them all. Each name links to its full definition in
 the [message reference](../messages/military.md).
 
-## Safety and arming
+## Payload, arming and stores
 
-Arming, ignition and fault state for each Electronic Safe and Arm Device
-(ESAD), and the readiness of each store before release.
+Arming, actuation, fault and sensor state for each fitted payload (an
+Electronic Safe and Arm Device (ESAD), a gun, a non-lethal capability or a
+loitering munition), and the readiness and carrier release consent of each
+store before release.
 
 | Message | ID | What it carries |
 | --- | --- | --- |
-| [ESAD_STATE](../messages/military.md#ESAD_STATE) | 53030 | Arming, munition and ignition state, fault flags and software identity of one ESAD |
-| [ESAD_ARMING](../messages/military.md#ESAD_ARMING) | 53031 | Arms or disarms ESADs. An arm must carry the challenge the ESAD advertises; a disarm always applies |
-| [ESAD_CONFIG](../messages/military.md#ESAD_CONFIG) | 53032 | Sets a live safe/arm parameter, checked against the same challenge as an arm |
-| [STORE_STATUS](../messages/military.md#STORE_STATUS) | 53033 | One readiness value per store, from ESAD state and sensor health, to gate release |
-| [STORE_SENSOR_STATUS](../messages/military.md#STORE_SENSOR_STATUS) | 53034 | Health and reading of one deceleration or landing-trigger sensor |
+| [PAYLOAD_STATE](../messages/military.md#PAYLOAD_STATE) | 53030 | Lifecycle state, condition flags and the state-bound auxiliary datum of one fitted payload |
+| [PAYLOAD_CONTROL](../messages/military.md#PAYLOAD_CONTROL) | 53031 | Arm, disarm, activate or deactivate a payload. An arm or activate must carry the challenge the payload advertises and the carrier's release consent; a disarm always applies |
+| [PAYLOAD_CONFIG](../messages/military.md#PAYLOAD_CONFIG) | 53032 | Sets coarse payload settings, checked against the same challenge as an arm |
+| [STORE_STATUS](../messages/military.md#STORE_STATUS) | 53033 | One readiness value per store, from payload state and sensor health, plus the carrier's per-store release consent to gate release |
+| [STORE_SENSOR_STATUS](../messages/military.md#STORE_SENSOR_STATUS) | 53034 | Health and reading of one carrier-side deceleration or landing-trigger sensor |
 | [STORE_MUNITION](../messages/military.md#STORE_MUNITION) | 53035 | What a store holds, for joint weapon-status reports, without fuze or employment settings |
+| [PAYLOAD_SETTINGS](../messages/military.md#PAYLOAD_SETTINGS) | 53037 | Carrier-assigned settings for a slot: name, mass, sensor readiness recipe, and the device's effective SST/standoff detents |
+| [PAYLOAD_GET_SETTINGS](../messages/military.md#PAYLOAD_GET_SETTINGS) | 53038 | Requests PAYLOAD_SETTINGS for a payload/store scope |
+| [PAYLOAD_SENSOR_STATUS](../messages/military.md#PAYLOAD_SENSOR_STATUS) | 53039 | Health and reading of one payload-side sensor, class-scoped |
 
 | Command | Number | What it does |
 | --- | --- | --- |
-| [MAV_CMD_MAVLINK_M_STORE_ARM](../messages/military.md#MAV_CMD_MAVLINK_M_STORE_ARM) | 53090 | Safes a store's ESAD. Arming goes through ESAD_ARMING |
+| [MAV_CMD_MAVLINK_M_STORE_ARM](../messages/military.md#MAV_CMD_MAVLINK_M_STORE_ARM) | 53090 | Safes a store's payload. Arming goes through PAYLOAD_CONTROL |
 | [MAV_CMD_MAVLINK_M_STORE_RUN_BIT](../messages/military.md#MAV_CMD_MAVLINK_M_STORE_RUN_BIT) | 53091 | Runs a built-in self-test on a store |
 | [MAV_CMD_MAVLINK_M_STORE_REQUEST_STATUS](../messages/military.md#MAV_CMD_MAVLINK_M_STORE_REQUEST_STATUS) | 53092 | Asks a store to push its status |
 | [MAV_CMD_MAVLINK_M_STORE_SET_DECEL_THRESHOLD](../messages/military.md#MAV_CMD_MAVLINK_M_STORE_SET_DECEL_THRESHOLD) | 53093 | Sets a store's deceleration or landing trigger threshold |
