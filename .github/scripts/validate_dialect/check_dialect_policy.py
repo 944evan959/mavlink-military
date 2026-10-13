@@ -38,13 +38,14 @@ Exit status: 0 when every check passes, 1 with one line per violation.
 
 from __future__ import annotations
 
-import os
 import re
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import NamedTuple
 from xml.parsers import expat
+
+from _helpers import Finding, parse, report
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -59,38 +60,6 @@ IDMAPPING = "IDMAPPING.md"
 NAME_CELL = re.compile(r"^`?([A-Z][A-Z0-9_]*)")  # "TARGET (formerly TARGET_COORD)" is TARGET
 NUMBER_CELL = re.compile(r"^`?(\d+)`?$")
 RANGE_CELL = re.compile(r"^`?(\d+)-(\d+)`?$")
-
-
-class Finding(NamedTuple):
-    """One policy violation, at a line of a dialect file."""
-
-    file: str
-    line: int
-    message: str
-
-    def __str__(self) -> str:
-        return f"{self.file}:{self.line}: {self.message}"
-
-
-def parse(path: Path) -> tuple[ET.Element, dict[ET.Element, int]]:
-    """Parse an XML file, recording the line each element starts on.
-
-    ElementTree keeps no line numbers, so this drives expat with an
-    ElementTree builder and notes the parser's line at each start tag.
-    """
-    builder = ET.TreeBuilder()
-    lines: dict[ET.Element, int] = {}
-    parser = expat.ParserCreate()
-
-    def start(tag: str, attrs: dict[str, str]) -> None:
-        lines[builder.start(tag, attrs)] = parser.CurrentLineNumber
-
-    parser.StartElementHandler = start
-    parser.EndElementHandler = builder.end
-    parser.CharacterDataHandler = builder.data
-    with path.open("rb") as xml:
-        parser.ParseFile(xml)
-    return builder.close(), lines
 
 
 class Dialect:
@@ -361,18 +330,6 @@ def check_idmapping(shared: Dialect, path: Path) -> list[Finding]:
                     )
                 )
     return errors
-
-
-def report(finding: Finding) -> None:
-    """Print a finding, as an annotation on its line when run by GitHub Actions."""
-    if os.environ.get("GITHUB_ACTIONS") == "true":
-        text = str(finding).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-        print(
-            f"::error file={finding.file},line={finding.line},title=dialect policy::{text}",
-            file=sys.stderr,
-        )
-    else:
-        print(f"ERROR: {finding}", file=sys.stderr)
 
 
 def main(argv: list[str]) -> int:

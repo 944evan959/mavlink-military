@@ -143,6 +143,20 @@
       ENGAGEMENT_DIRECTIVE or PAYLOAD_CONTROL is a valid stop or no-op sent to
       every system. Both fail toward safe; a sender never transmits an unset
       message.
+    - The payload meaning enums (PAYLOAD_STATUS, PAYLOAD_STATE_CHANGE_REQUEST,
+      PAYLOAD_FUNC_TYPE, PAYLOAD_CONFIG, PAYLOAD_CLASS, PAYLOAD_DATA_KIND)
+      take their values from the extended binary Hamming [8,4,4] codebook, in
+      file order: entry i carries codebook[i], so slot 0 is 0x00 (the
+      UNKNOWN / NONE anchor) and every other value is at Hamming distance 4
+      or more from every other value. The codebook:
+        slot 0  = 0x00   slot 1  = 0x1E   slot 2  = 0x27   slot 3  = 0x39
+        slot 4  = 0x4B   slot 5  = 0x55   slot 6  = 0x6C   slot 7  = 0x72
+        slot 8  = 0x8D   slot 9  = 0x93   slot 10 = 0xAA   slot 11 = 0xB4
+        slot 12 = 0xC6   slot 13 = 0xD8   slot 14 = 0xE1   slot 15 = 0xFF
+      A 2-bit glitch on the wire lands off the codebook rather than on a
+      different state. PAYLOAD_STATUS_FLAGS is a bitmask and
+      PAYLOAD_SENSOR_TYPE also indexes the uint32_t readiness masks, so both
+      keep their own value discipline and are outside the codebook.
 
   COORDINATE DATUM
     All altitudes are MSL (mean sea level). Joint networks often pass targeting
@@ -583,16 +597,16 @@
         reported with, so an observer never has to disambiguate a countdown
         from an error code from an environmental reading.
       </description>
-      <entry value="0" name="MAVLINK_M_PAYLOAD_NOT_PRESENT"><description>Payload not detected in the store. payload_aux: none (0).</description></entry>
-      <entry value="1" name="MAVLINK_M_PAYLOAD_IDLE"><description>Detected and locally safe — for an ESAD this is the safety pin present or trigger lock engaged (formerly PIN_PRESENT plus ARMING_DISARMED). payload_aux: none (0), or an environmental-condition code (implementation-defined) if the safe/lockout is environmental.</description></entry>
-      <entry value="2" name="MAVLINK_M_PAYLOAD_SST"><description>In the safe-separation lockout, counting down from a defined timer value. payload_aux: remaining seconds (string).</description></entry>
-      <entry value="3" name="MAVLINK_M_PAYLOAD_DISARMED"><description>Detected and cleared to arm on request. payload_aux: none (0).</description></entry>
-      <entry value="4" name="MAVLINK_M_PAYLOAD_ARMING"><description>Actively attempting to arm (handshake / self-test in flight). payload_aux: none (0).</description></entry>
-      <entry value="5" name="MAVLINK_M_PAYLOAD_ARMED"><description>Armed and ready for activation. payload_aux: none (0).</description></entry>
-      <entry value="6" name="MAVLINK_M_PAYLOAD_ACTIVATED"><description>Activation function has executed (gun: fired; ESAD: detonated; non-lethal: round cycled). payload_aux: none (0).</description></entry>
-      <entry value="7" name="MAVLINK_M_PAYLOAD_DISABLING"><description>Actively attempting to disable / render safe. payload_aux: none (0).</description></entry>
-      <entry value="8" name="MAVLINK_M_PAYLOAD_DISABLED"><description>Disabled; requires power cycle or service to function again. payload_aux: none (0).</description></entry>
-      <entry value="9" name="MAVLINK_M_PAYLOAD_ERROR"><description>Payload experienced an internal or subsystem error. payload_aux: error descriptor code (implementation-defined), or 0 if none.</description></entry>
+      <entry value="0"    name="MAVLINK_M_PAYLOAD_NOT_PRESENT"><description>Payload not detected in the store. payload_aux: none (0).</description></entry>
+      <entry value="0x1E" name="MAVLINK_M_PAYLOAD_IDLE"><description>Detected and locally safe — for an ESAD this is the safety pin present or trigger lock engaged (formerly PIN_PRESENT plus ARMING_DISARMED). payload_aux: none (0), or an environmental-condition code (implementation-defined) if the safe/lockout is environmental.</description></entry>
+      <entry value="0x27" name="MAVLINK_M_PAYLOAD_SST"><description>In the safe-separation lockout, counting down from a defined timer value. payload_aux: remaining seconds (string).</description></entry>
+      <entry value="0x39" name="MAVLINK_M_PAYLOAD_DISARMED"><description>Detected and cleared to arm on request. payload_aux: none (0).</description></entry>
+      <entry value="0x4B" name="MAVLINK_M_PAYLOAD_ARMING"><description>Actively attempting to arm (handshake / self-test in flight). payload_aux: none (0).</description></entry>
+      <entry value="0x55" name="MAVLINK_M_PAYLOAD_ARMED"><description>Armed and ready for activation. payload_aux: none (0).</description></entry>
+      <entry value="0x6C" name="MAVLINK_M_PAYLOAD_ACTIVATED"><description>Activation function has executed (gun: fired; ESAD: detonated; non-lethal: round cycled). payload_aux: none (0).</description></entry>
+      <entry value="0x72" name="MAVLINK_M_PAYLOAD_DISABLING"><description>Actively attempting to disable / render safe. payload_aux: none (0).</description></entry>
+      <entry value="0x8D" name="MAVLINK_M_PAYLOAD_DISABLED"><description>Disabled; requires power cycle or service to function again. payload_aux: none (0).</description></entry>
+      <entry value="0x93" name="MAVLINK_M_PAYLOAD_ERROR"><description>Payload experienced an internal or subsystem error. payload_aux: error descriptor code (implementation-defined), or 0 if none.</description></entry>
     </enum>
 
     <enum name="MAVLINK_M_PAYLOAD_STATUS_FLAGS" bitmask="true">
@@ -621,12 +635,12 @@
         always apply; arm and activate require the carrier's release consent
         (STORE_STATUS.release_consent = 1) on the targeted bay.
       </description>
-      <entry value="0" name="MAVLINK_M_PAYLOAD_STATE_CHANGE_REQUEST_NONE"><description>No state change requested. Two-state zero-action per the dialect enum rule: a zero-filled control message is a valid no-op, not an arm.</description></entry>
-      <entry value="1" name="MAVLINK_M_PAYLOAD_STATE_CHANGE_REQUEST_DISARM"><description>Request disarm / render safe.</description></entry>
-      <entry value="2" name="MAVLINK_M_PAYLOAD_STATE_CHANGE_REQUEST_ARM"><description>Request arm.</description></entry>
-      <entry value="3" name="MAVLINK_M_PAYLOAD_STATE_CHANGE_REQUEST_MODE"><description>Request mode change; the selected mode is carried in mode_change.</description></entry>
-      <entry value="4" name="MAVLINK_M_PAYLOAD_STATE_CHANGE_REQUEST_ACTIVATE"><description>Request activation of the payload function (one-shot).</description></entry>
-      <entry value="5" name="MAVLINK_M_PAYLOAD_STATE_CHANGE_REQUEST_DEACTIVATE"><description>Request deactivation of the active function without a full disarm.</description></entry>
+      <entry value="0"    name="MAVLINK_M_PAYLOAD_STATE_CHANGE_REQUEST_NONE"><description>No state change requested. Two-state zero-action per the dialect enum rule: a zero-filled control message is a valid no-op, not an arm.</description></entry>
+      <entry value="0x1E" name="MAVLINK_M_PAYLOAD_STATE_CHANGE_REQUEST_DISARM"><description>Request disarm / render safe.</description></entry>
+      <entry value="0x27" name="MAVLINK_M_PAYLOAD_STATE_CHANGE_REQUEST_ARM"><description>Request arm.</description></entry>
+      <entry value="0x39" name="MAVLINK_M_PAYLOAD_STATE_CHANGE_REQUEST_MODE"><description>Request mode change; the selected mode is carried in mode_change.</description></entry>
+      <entry value="0x4B" name="MAVLINK_M_PAYLOAD_STATE_CHANGE_REQUEST_ACTIVATE"><description>Request activation of the payload function (one-shot).</description></entry>
+      <entry value="0x55" name="MAVLINK_M_PAYLOAD_STATE_CHANGE_REQUEST_DEACTIVATE"><description>Request deactivation of the active function without a full disarm.</description></entry>
     </enum>
 
     <enum name="MAVLINK_M_PAYLOAD_FUNC_TYPE">
@@ -635,14 +649,14 @@
         (report of the fitted capability) and PAYLOAD_CONTROL.mode_change
         (commanded mode when state_change = MODE).
       </description>
-      <entry value="0" name="MAVLINK_M_PAYLOAD_FUNC_TYPE_NONE"><description>Capability unspecified / no function mode selected.</description></entry>
-      <entry value="1" name="MAVLINK_M_PAYLOAD_FUNC_TYPE_COMMAND"><description>Commanded function: acts only on explicit operator command (gun semi, manual actuation).</description></entry>
-      <entry value="2" name="MAVLINK_M_PAYLOAD_FUNC_TYPE_PROXIMITY"><description>Proximity function: acts automatically inside a device-defined standoff (ESAD proximity mode). The coarse detent the device holds is reported on PAYLOAD_SETTINGS.act_dist and must never be widened to a continuous value on the wire.</description></entry>
-      <entry value="3" name="MAVLINK_M_PAYLOAD_FUNC_TYPE_SEMI_AUTO"><description>Semi-automatic function: one round per operator trigger, sensor-assisted release window.</description></entry>
-      <entry value="4" name="MAVLINK_M_PAYLOAD_FUNC_TYPE_AUTO"><description>Automatic function under sensor control.</description></entry>
-      <entry value="5" name="MAVLINK_M_PAYLOAD_FUNC_TYPE_EXPLOIT"><description>Exploit function for a specific capability (e.g. loitering munition attack run).</description></entry>
-      <entry value="6" name="MAVLINK_M_PAYLOAD_FUNC_TYPE_DROP"><description>Drop function (gravity release; the carrier performs the actuation).</description></entry>
-      <entry value="7" name="MAVLINK_M_PAYLOAD_FUNC_TYPE_OTHER"><description>Other / implementation-specific capability.</description></entry>
+      <entry value="0"    name="MAVLINK_M_PAYLOAD_FUNC_TYPE_NONE"><description>Capability unspecified / no function mode selected.</description></entry>
+      <entry value="0x1E" name="MAVLINK_M_PAYLOAD_FUNC_TYPE_COMMAND"><description>Commanded function: acts only on explicit operator command (gun semi, manual actuation).</description></entry>
+      <entry value="0x27" name="MAVLINK_M_PAYLOAD_FUNC_TYPE_PROXIMITY"><description>Proximity function: acts automatically inside a device-defined standoff (ESAD proximity mode). The coarse detent the device holds is reported on PAYLOAD_SETTINGS.act_dist and must never be widened to a continuous value on the wire.</description></entry>
+      <entry value="0x39" name="MAVLINK_M_PAYLOAD_FUNC_TYPE_SEMI_AUTO"><description>Semi-automatic function: one round per operator trigger, sensor-assisted release window.</description></entry>
+      <entry value="0x4B" name="MAVLINK_M_PAYLOAD_FUNC_TYPE_AUTO"><description>Automatic function under sensor control.</description></entry>
+      <entry value="0x55" name="MAVLINK_M_PAYLOAD_FUNC_TYPE_EXPLOIT"><description>Exploit function for a specific capability (e.g. loitering munition attack run).</description></entry>
+      <entry value="0x6C" name="MAVLINK_M_PAYLOAD_FUNC_TYPE_DROP"><description>Drop function (gravity release; the carrier performs the actuation).</description></entry>
+      <entry value="0x72" name="MAVLINK_M_PAYLOAD_FUNC_TYPE_OTHER"><description>Other / implementation-specific capability.</description></entry>
     </enum>
 
     <enum name="MAVLINK_M_PAYLOAD_CONFIG">
@@ -655,10 +669,10 @@
         exists for it. Adding a category is a dialect change; "set
         parameter X" is not an option on the wire.
       </description>
-      <entry value="0" name="MAVLINK_M_PAYLOAD_CONFIG_NONE"><description>No category (padding slot).</description></entry>
-      <entry value="1" name="MAVLINK_M_PAYLOAD_CONFIG_PAYLOAD_ID"><description>Assign / change the payload instance id.</description></entry>
-      <entry value="2" name="MAVLINK_M_PAYLOAD_CONFIG_STORE_ID"><description>Assign / change the carrier slot id.</description></entry>
-      <entry value="3" name="MAVLINK_M_PAYLOAD_CONFIG_WEIGHT"><description>Payload mass assigned in the carrier's record (config_value in grams).</description></entry>
+      <entry value="0"    name="MAVLINK_M_PAYLOAD_CONFIG_NONE"><description>No category (padding slot).</description></entry>
+      <entry value="0x1E" name="MAVLINK_M_PAYLOAD_CONFIG_PAYLOAD_ID"><description>Assign / change the payload instance id.</description></entry>
+      <entry value="0x27" name="MAVLINK_M_PAYLOAD_CONFIG_STORE_ID"><description>Assign / change the carrier slot id.</description></entry>
+      <entry value="0x39" name="MAVLINK_M_PAYLOAD_CONFIG_WEIGHT"><description>Payload mass assigned in the carrier's record (config_value in grams).</description></entry>
     </enum>
 
     <enum name="MAVLINK_M_PAYLOAD_CLASS">
@@ -673,12 +687,12 @@
         class-banded sensor entries as implementation-defined and display
         them verbatim.
       </description>
-      <entry value="0" name="MAVLINK_M_PAYLOAD_CLASS_UNKNOWN"><description>Class not established.</description></entry>
-      <entry value="1" name="MAVLINK_M_PAYLOAD_CLASS_ESAD"><description>Electronic safe-and-arm / proximity detonator class.</description></entry>
-      <entry value="2" name="MAVLINK_M_PAYLOAD_CLASS_GUN"><description>Fitted gun / weapon station class.</description></entry>
-      <entry value="3" name="MAVLINK_M_PAYLOAD_CLASS_NON_LETHAL"><description>Non-lethal capability class (flare, chaff, laser, etc.).</description></entry>
-      <entry value="4" name="MAVLINK_M_PAYLOAD_CLASS_LOITERING"><description>Loitering munition / one-way-attack class. The consent handshake for this class stays on LOITER_MUNITION_CONTROL (53036) and is not folded into PAYLOAD_CONTROL.</description></entry>
-      <entry value="5" name="MAVLINK_M_PAYLOAD_CLASS_OTHER"><description>Other / implementation-specific class.</description></entry>
+      <entry value="0"    name="MAVLINK_M_PAYLOAD_CLASS_UNKNOWN"><description>Class not established.</description></entry>
+      <entry value="0x1E" name="MAVLINK_M_PAYLOAD_CLASS_ESAD"><description>Electronic safe-and-arm / proximity detonator class.</description></entry>
+      <entry value="0x27" name="MAVLINK_M_PAYLOAD_CLASS_GUN"><description>Fitted gun / weapon station class.</description></entry>
+      <entry value="0x39" name="MAVLINK_M_PAYLOAD_CLASS_NON_LETHAL"><description>Non-lethal capability class (flare, chaff, laser, etc.).</description></entry>
+      <entry value="0x4B" name="MAVLINK_M_PAYLOAD_CLASS_LOITERING"><description>Loitering munition / one-way-attack class. The consent handshake for this class stays on LOITER_MUNITION_CONTROL (53036) and is not folded into PAYLOAD_CONTROL.</description></entry>
+      <entry value="0x55" name="MAVLINK_M_PAYLOAD_CLASS_OTHER"><description>Other / implementation-specific class.</description></entry>
     </enum>
 
     <enum name="MAVLINK_M_PAYLOAD_DATA_KIND">
@@ -690,11 +704,11 @@
         0 = unknown, so a zero-filled field never decodes as a substantive
         default.
       </description>
-      <entry value="0" name="MAVLINK_M_PAYLOAD_DATA_KIND_UNKNOWN"><description>Reading kind not reported.</description></entry>
-      <entry value="1" name="MAVLINK_M_PAYLOAD_DATA_KIND_ANALOG"><description>Continuous reading; value in sensor units, value_min / value_max the valid operating window.</description></entry>
-      <entry value="2" name="MAVLINK_M_PAYLOAD_DATA_KIND_COUNT"><description>Remaining quantity (ammo, flares, chaff); value = integer count, min = zero, max = loaded.</description></entry>
-      <entry value="3" name="MAVLINK_M_PAYLOAD_DATA_KIND_DISCRETE"><description>Two-or-few states (breech open/closed, lock engaged); value = state number per the sensor_type definition; min = 0, max = highest defined state.</description></entry>
-      <entry value="4" name="MAVLINK_M_PAYLOAD_DATA_KIND_TEXT"><description>Symbolic reading; value is an index into an implementation-defined label set, rendered verbatim by consumers.</description></entry>
+      <entry value="0"    name="MAVLINK_M_PAYLOAD_DATA_KIND_UNKNOWN"><description>Reading kind not reported.</description></entry>
+      <entry value="0x1E" name="MAVLINK_M_PAYLOAD_DATA_KIND_ANALOG"><description>Continuous reading; value in sensor units, value_min / value_max the valid operating window.</description></entry>
+      <entry value="0x27" name="MAVLINK_M_PAYLOAD_DATA_KIND_COUNT"><description>Remaining quantity (ammo, flares, chaff); value = integer count, min = zero, max = loaded.</description></entry>
+      <entry value="0x39" name="MAVLINK_M_PAYLOAD_DATA_KIND_DISCRETE"><description>Two-or-few states (breech open/closed, lock engaged); value = state number per the sensor_type definition; min = 0, max = highest defined state.</description></entry>
+      <entry value="0x4B" name="MAVLINK_M_PAYLOAD_DATA_KIND_TEXT"><description>Symbolic reading; value is an index into an implementation-defined label set, rendered verbatim by consumers.</description></entry>
     </enum>
 
     <enum name="MAVLINK_M_PAYLOAD_SENSOR_TYPE">
