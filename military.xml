@@ -664,10 +664,9 @@
         Category of one config pair in a PAYLOAD_CONFIG partial update.
         Values are category-native: WEIGHT → config_value in grams;
         PAYLOAD_ID / STORE_ID → numeric id in config_value. The assigned
-        name is carried in the separate config_name field, not as a pair.
+        name is carried in the separate config_name field.
         This is a closed set: a setting is settable only if a category
-        exists for it. Adding a category is a dialect change; "set
-        parameter X" is not an option on the wire.
+        exists for it.
       </description>
       <entry value="0"    name="MAVLINK_M_PAYLOAD_CONFIG_NONE"><description>No category (padding slot).</description></entry>
       <entry value="0x1E" name="MAVLINK_M_PAYLOAD_CONFIG_PAYLOAD_ID"><description>Assign / change the payload instance id.</description></entry>
@@ -1673,7 +1672,14 @@
     <!-- 53030: PAYLOAD_STATE (formerly ESAD_STATE)                  -->
     <!-- ============================================================ -->
     <message id="53030" name="PAYLOAD_STATE">
-      <description>Telemetry for one fitted payload: capability, class, sequential lifecycle state, condition flags, and the state-bound auxiliary datum. Replaces ESAD_STATE, whose arming / munition / ignition state triad and fault flags are absorbed into payload_state and status_flags. payload_id identifies the payload instance (operator / C2 perception); store_id identifies the physical bay (carrier perception). payload_id = 0 reports the unfit slot itself; a consumer that knows only this dialect file can interpret every field, including the class-banded meanings, from payload_class plus the payload enums (a 3014 CLASS CODE + DESCRIPTOR resolution).</description>
+      <description>Telemetry for one fitted payload: capability, class, sequential lifecycle state,
+          condition flags, and the state-bound auxiliary datum. Replaces ESAD_STATE, whose
+          arming / munition / ignition state triad and fault flags are absorbed into payload_state
+          and status_flags. payload_id identifies the payload instance (operator / C2 perception);
+          store_id identifies the physical bay (carrier perception). payload_id = 0 reports the unfit
+          slot itself; a consumer that knows only this dialect file can interpret every field, including
+          the class-banded meanings, from payload_class plus the payload enums (a 3014 CLASS CODE +
+          DESCRIPTOR resolution).</description>
       <field type="uint64_t"  name="time_usec"         units="us">Timestamp (UNIX epoch, microseconds UTC).</field>
       <field type="uint8_t"   name="payload_id">Payload instance id, assigned by the operator / C2. 0 = no payload fitted in this store (reporting the slot's state). 1-254 = fitted instance. 255 = reserved.</field>
       <field type="uint8_t"   name="store_id">Store instance identifier. Fixed physical bay assignment: a bay keeps its store_id permanently, and when a store is expended the bay may be reloaded under the same store_id. IDs never renumber. 0 = not applicable / single store. This is the canonical definition of store_id across the dialect.</field>
@@ -1683,14 +1689,27 @@
       <field type="uint8_t"   name="payload_state"    enum="MAVLINK_M_PAYLOAD_STATUS">Reported lifecycle state (sequential, mutually exclusive).</field>
       <field type="uint8_t"   name="status_flags"     enum="MAVLINK_M_PAYLOAD_STATUS_FLAGS">Condition flags (bitmask, multiple may be set): busy, subsystem fault, internal fault, service request, sensor-gated, fired. Distinct from payload_aux: flags say which conditions hold, the aux carries the state-bound detail.</field>
       <field type="char[16]"  name="payload_aux">State-bound auxiliary datum: at most one at a time, meaning defined by the payload_state it is reported with (e.g. remaining safe-separation seconds while in SST, error descriptor while in ERROR). "0" / empty if none. Opaque to a receiver except where the state entry names its meaning; display other values verbatim.</field>
-      <field type="uint8_t[16]" name="track_uid">Track UID (UUID) of the engagement this store is armed for, when applicable. Ties the armed state to a specific authorized track so a monitoring station sees "armed against track X," not merely "a payload is hot." All-zero if not associated with a track, and cleared to all-zero when the store is disarmed.</field>
+      <field type="uint8_t[16]" name="track_uid">Track UID (UUID) of the engagement this store is armed for, when applicable. Ties the armed state to a specific authorized track. All-zero if not associated with a track, and cleared to all-zero when the store is disarmed.</field>
     </message>
 
     <!-- ============================================================ -->
     <!-- 53031: PAYLOAD_CONTROL (formerly ESAD_ARMING)               -->
     <!-- ============================================================ -->
     <message id="53031" name="PAYLOAD_CONTROL">
-      <description>Payload control command requesting a state change (or mode change) on one or more payload instances on the receiving system. An ARM or ACTIVATE must carry the challenge the selected payload advertises in PAYLOAD_STATE; with payload_id = 0 it applies only if every local payload selected by store_id advertises that hash, and is otherwise rejected, so an ARM never applies in part. A DISARM or DEACTIVATE applies to every selected local payload without checking the challenge hash, so no payload's state can block it; as for any stop, MAVLink message signing on the link authenticates the sender. An addressed ARM or ACTIVATE whose payload_id and store_id select no local payload is rejected, and an addressed DISARM that selects none is answered MAVLINK_M_ACK_NOT_APPLICABLE; a DISARM sent to every system that selects no local payload is not acted on or answered. Each system judges only its own payloads, so a command that reaches several systems can apply on some and not on others; the originator confirms the result for each system from its MAVLINK_M_ACK and PAYLOAD_STATE. ARM and ACTIVATE additionally require the carrier's release consent (STORE_STATUS.release_consent = 1) on each targeted bay.</description>
+      <description>Payload control command requesting a state change (or mode change) on one or
+          more payload instances on the receiving system. An ARM or ACTIVATE must carry the challenge
+          the selected payload advertises in PAYLOAD_STATE; with payload_id = 0 it applies only if
+          every local payload selected by store_id advertises that hash, and is otherwise rejected, so
+          an ARM never applies in part. A DISARM or DEACTIVATE applies to every selected local payload
+          without checking the challenge hash, so no payload's state can block it; as for any stop,
+          MAVLink message signing on the link authenticates the sender. An addressed ARM or ACTIVATE
+          whose payload_id and store_id select no local payload is rejected, and an addressed DISARM
+          that selects none is answered MAVLINK_M_ACK_NOT_APPLICABLE; a DISARM sent to every system that
+          selects no local payload is not acted on or answered. Each system judges only its own payloads,
+          so a command that reaches several systems can apply on some and not on others; the originator
+          confirms the result for each system from its MAVLINK_M_ACK and PAYLOAD_STATE. ARM and ACTIVATE
+          additionally require the carrier's release consent (STORE_STATUS.release_consent = 1) on each
+          targeted bay.</description>
       <field type="uint64_t" name="time_usec"            units="us">Timestamp (UNIX epoch, microseconds UTC).</field>
       <field type="uint8_t"  name="target_system">System ID of the intended recipient. 0 (every system) is valid only for MAVLINK_M_PAYLOAD_STATE_CHANGE_REQUEST_DISARM and MAVLINK_M_PAYLOAD_STATE_CHANGE_REQUEST_DEACTIVATE, which each receiving system applies to its own payloads; receivers ignore an arm or activate request sent with 0.</field>
       <field type="uint8_t"  name="target_component">Component ID of the intended recipient within target_system. 0 = every component of that system. Ignored when target_system is 0.</field>
@@ -2321,7 +2340,7 @@
         3014 CLASS CODE + DESCRIPTOR model). The carrier-side counterpart
         (53034 STORE_SENSOR_STATUS) covers the carrier's own decel /
         gate sensors that gate release. The two messages are distinct
-        channels, not duplicates; both draw from the same
+        channels; both draw from the same
         MAVLINK_M_PAYLOAD_SENSOR_TYPE registry.
       </description>
       <field type="uint64_t" name="time_usec"    units="us">Timestamp (UNIX epoch, microseconds UTC).</field>

@@ -3,3 +3,6 @@ c_lib_deploy*
 .claude/settings.local.json
 .claude/worktrees/
 __pycache__/
+GLOSSARY.md
+workspace/
+Mavlink Military/
