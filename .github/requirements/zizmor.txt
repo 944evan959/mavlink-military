@@ -6,7 +6,7 @@
 # lists the hash of every file PyPI holds for its version. To move it by
 # hand, regenerate the lines below with uv, a week back like Dependabot's
 # cooldown:
-#   printf 'zizmor==1.30.1\n' | uv pip compile - --python-version 3.12 \
+#   printf 'zizmor==<version>\n' | uv pip compile - --python-version 3.12 \
 #     --generate-hashes --only-binary :all: --no-annotate --no-header \
 #     --exclude-newer <date a week ago>
 zizmor==1.30.1 \
